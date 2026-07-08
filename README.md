@@ -38,23 +38,47 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python
 # No API key needed — scripted agent, reproduces the mechanism-level result:
 .venv/bin/python -m hypermcp.run                         # retail
 .venv/bin/python -m hypermcp.run --env wot --ablations   # WoT + SEM ablations
-.venv/bin/python -m hypermcp.run --ablations --out results   # log runs to results/*.jsonl
 
-# Real LLM numbers (copy .env.example -> .env and set ANTHROPIC_API_KEY):
+# Real LLM numbers (copy .env.example -> .env and set OPENAI_API_KEY or ANTHROPIC_API_KEY):
+.venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
+.venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --no-policy --out results
+.venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --distractors 50 --out results
 .venv/bin/python -m hypermcp.run --agent anthropic --model claude-opus-4-8 --ablations
 
-# Open model via an OpenAI-compatible endpoint:
-.venv/bin/python -m hypermcp.run --agent openai --model <name> --base-url <url>
+# Aggregate all logged runs into a per-(model, condition, interface) table:
+.venv/bin/python -m hypermcp.report
 
-# Invariants (12k+ instance-checks; no key needed):
+# Invariants (13k+ instance-checks; no key needed):
 .venv/bin/python -m tests.test_invariants
 ```
 
 Metrics per run: task success, illegal-tool-call rate, structurally-blocked count,
-steps, average menu size (context proxy), tokens. Ablations `hyper-noctx` / `-noenum` /
-`-noenv` isolate the agent-context input, enum-narrowing, and the signifier envelope.
-Note: enum/envelope steer a *real LLM* toward valid args/next-steps, so their effect
-shows under `--agent anthropic|openai`, not in scripted mode.
+steps, average menu size (context proxy), tokens. Flags: `--ablations` adds
+`hyper-noctx` / `-noenum` / `-noenv` (isolating the agent-context input, enum-narrowing,
+and the signifier envelope); `--no-policy` removes the natural-language policy from the
+prompt (does the SEM enforce validity structurally?); `--distractors N` pads the env with
+N never-applicable tools (the many-servers regime). Note: enum/envelope steer a *real LLM*
+toward valid args/next-steps, so their effect shows under a real agent, not scripted mode.
+
+## Preliminary results
+
+`gpt-4o-mini`, retail domain, 5 tasks/cell (reproduce with the commands above + `report`):
+
+| Setting | Interface | Success | Illegal | Tokens |
+|---|---|---|---|---|
+| policy | flat | 100% | 0 | 1808 |
+| policy | retrieval | **40%** | **5** | 566 |
+| policy | **hyper** | 100% | 0 | 1452 |
+| no policy | flat | 100% | **1** | 1000 |
+| no policy | **hyper** | 100% | **0** | 1063 |
+| many tools (57) | flat | 100% | 0 | **6205** |
+| many tools | retrieval | 40% | 5 | 564 |
+| many tools | **hyper** | 100% | 0 | **1547 (−75%)** |
+
+Retrieval trades validity for tokens (it drops the auth prerequisite); HyperMCP keeps
+validity **and** stays flat in context as tools scale. Removing the policy text makes flat
+begin to violate constraints while HyperMCP stays valid — its guarantees are structural,
+not prompt-engineered.
 
 ## Layout
 
@@ -62,12 +86,15 @@ shows under `--agent anthropic|openai`, not in scripted mode.
 hypermcp/
   core.py             State, AgentContext, Affordance (guard/effect/candidates/purposes),
                       state+context-narrowed tool schemas
-  envs/retail.py      tau-bench retail policy as guards + tasks (incl. a trap) + agent goals
+  envs/retail.py      tau-bench retail policy as guards + tasks (traps) + agent goals
+  envs/wot.py         Web-of-Things smart space: device state machines as guards
   interfaces.py       FlatInterface / RetrievalInterface (BM25) / HyperInterface (the SEM)
   signifiers.py       HMAS Interaction ontology envelope (JSON-LD-shaped)
   bridges/yggdrasil.py  HyperMCP<->Yggdrasil bridge (scaffold; live path TODO)
   agents.py           run_scripted + AnthropicAgent + OpenAIAgent (tool-calling loops)
   metrics.py          RunResult + aggregate
+  report.py           aggregate results/*.jsonl into a comparison table
   run.py              CLI
+tests/test_invariants.py  randomised checks of the no-invalid-call guarantee
 prototype/            standalone stdlib PoC of the core mechanism
 ```
