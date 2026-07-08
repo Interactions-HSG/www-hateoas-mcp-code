@@ -158,7 +158,7 @@ def fig_quadrant(rows, outdir: pathlib.Path) -> None:
     ax.set_ylim(-0.08, None)
     ax.set_xlabel("avg. tokens per task")
     ax.set_ylabel("illegal calls per episode")
-    ax.annotate("valid + cheap", xy=(0.02, 0.04), xycoords="axes fraction",
+    ax.annotate("valid and low-cost", xy=(0.02, 0.04), xycoords="axes fraction",
                 fontsize=6.0, color=MUTED, style="italic")
     fig.tight_layout(pad=0.4)
     fig.savefig(outdir / "fig-quadrant.pdf")
