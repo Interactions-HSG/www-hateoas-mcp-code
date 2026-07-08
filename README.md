@@ -38,7 +38,7 @@ the MCP substrate. The correspondence, and where each concept lives:
 | **Signifier** (reveals an affordance) | `signifiers.affordance_to_signifier` — HMAS-Interaction-ontology rendering, attached to results as `Observation.signifiers` | §3.3, Listing 1 |
 | **Signifier Exposure Mechanism** | `interfaces.HyperInterface.list_tools` = `A(s,c)`; enum narrowing in `core.Affordance.tool_spec` | §3.2, Eq. 3 |
 | Recommended context (SHACL shapes) | guard functions + eligible bindings (`context-conditions` in the JSON-LD view) | Listing 1 |
-| Yggdrasil / HMAS platform | `bridges/yggdrasil.py` (scaffold; live path is a paper deliverable) | §4.1 |
+| Yggdrasil / HMAS platform | `bridges/yggdrasil.py` (scaffold; live path is a paper deliverable) | §4 |
 
 The theory was built for symbolic (BDI) agents; the extension here is to treat the LLM
 tool-calling loop as a new class of signifier consumer, with `tools/list` as the exposure
