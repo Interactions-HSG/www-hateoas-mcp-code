@@ -42,6 +42,21 @@ def affordance_to_signifier(aff: Affordance, state: State,
 
 def envelope(affordances: list[Affordance], state: State,
              ctx: AgentContext | None = None) -> list[dict]:
-    """The next-step signifier envelope returned with a tools/call result."""
-    return [affordance_to_signifier(a, state, ctx)
-            for a in affordances if a.available(state) and a.relevant(ctx)]
+    """The next-step signifier envelope returned with a tools/call result.
+
+    Contains (a) signifiers for the currently-applicable, context-relevant affordances,
+    and (b) *pending* signifiers: relevant affordances that are not applicable yet,
+    carrying the unmet context (hmas:recommendsContext) instead of eligible bindings --
+    so that state-scoped narrowing does not hide the path to the agent's goal."""
+    out = [affordance_to_signifier(a, state, ctx)
+           for a in affordances if a.available(state) and a.relevant(ctx)]
+    for a in affordances:
+        if a.unlock_hint and a.relevant(ctx) and not a.available(state):
+            out.append({
+                "@type": f"{HMAS}Signifier",
+                "signifies": {"@type": f"{HMAS}ActionSpecification", "tool": a.name,
+                              "rel": a.rel, "description": a.description},
+                "currently-applicable": False,
+                "recommends-context": a.unlock_hint,
+            })
+    return out

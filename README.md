@@ -38,6 +38,7 @@ the MCP substrate. The correspondence, and where each concept lives:
 | **Signifier** (reveals an affordance) | `signifiers.affordance_to_signifier` — HMAS-Interaction-ontology rendering, attached to results as `Observation.signifiers` | §3.3, Listing 1 |
 | **Signifier Exposure Mechanism** | `interfaces.HyperInterface.list_tools` = `A(s,c)`; enum narrowing in `core.Affordance.tool_spec` | §3.2, Eq. 3 |
 | Recommended context (SHACL shapes) | guard functions + eligible bindings (`context-conditions` in the JSON-LD view) | Listing 1 |
+| **Pending signifiers / `recommendsContext`** | `Affordance.unlock_hint` → envelope's "[not yet available: …]" + `currently-applicable: false` signifiers — relevant-but-not-applicable affordances stay *visible* without being *callable* | Discussion |
 | Yggdrasil / HMAS platform | `bridges/yggdrasil.py` (scaffold; live path is a paper deliverable) | §4 |
 
 The theory was built for symbolic (BDI) agents; the extension here is to treat the LLM
@@ -64,6 +65,14 @@ channel and `notifications/tools/list_changed` as the perception update.
    the `noenum` ablation shows narrowing suppresses this. Question for the theory
    section: is client conformance an assumption of the proposition, or is the guard the
    mechanism's own last line of defence? (Per-call transcripts are in `results/*.jsonl`.)
+5. **Pending signifiers = `recommendsContext`?** On the shop's purchase task we observed
+   the discoverability cost of pure narrowing live: `place_order` (guarded on a
+   non-empty cart) stayed invisible, and agents looped in inspections instead of adding
+   to cart. We now expose relevant-but-not-applicable affordances as *pending*
+   signifiers carrying their unmet context (`Affordance.unlock_hint`) — visible, not
+   callable. Is this the right MCP rendering of `hmas:recommendsContext`, and should the
+   unmet context eventually be the machine-readable guard (SHACL shape) rather than
+   prose?
 
 ## Setup
 
@@ -80,6 +89,7 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python
 # No API key needed — scripted agent, reproduces the mechanism-level result:
 .venv/bin/python -m hypermcp.run                         # retail
 .venv/bin/python -m hypermcp.run --env wot --ablations   # WoT + SEM ablations
+.venv/bin/python -m hypermcp.run --env shop --max-steps 12   # realistic large-surface shop
 
 # Real LLM numbers (copy .env.example -> .env and set OPENAI_API_KEY or ANTHROPIC_API_KEY):
 .venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
@@ -103,9 +113,10 @@ prompt (does the SEM enforce validity structurally?); `--distractors N` pads the
 N never-applicable tools (the many-servers regime). Note: enum/envelope steer a *real LLM*
 toward valid args/next-steps, so their effect shows under a real agent, not scripted mode.
 
-## Preliminary results
+## Results
 
-`gpt-4o-mini`; retail n=20/cell (5 tasks × 4 runs), WoT n=12/cell (3 tasks × 4 runs):
+`gpt-4o-mini`; episodes/cell: retail 20, WoT 12, shop 40 (figures regenerate via
+`python -m hypermcp.figures`):
 
 | Env, setting | Interface | Success | Illegal | Menu | Tokens |
 |---|---|---|---|---|---|
@@ -113,27 +124,32 @@ toward valid args/next-steps, so their effect shows under a real agent, not scri
 | retail, policy | retrieval | **40%** | **21** | 3.0 | 588 |
 | retail, policy | **hyper** | 100% | **0** | 2.6 | 1398 (−24%) |
 | retail, no policy | flat | 100% | **4** | 7.0 | 1296 |
-| retail, no policy | retrieval | 40% | 19 | 3.0 | 408 |
 | retail, no policy | **hyper** | 100% | **0** | 2.6 | 1031 (−20%) |
-| retail, 57 tools | flat | 100% | 2 | 57.0 | **6364** |
-| retail, 57 tools | retrieval | 40% | 22 | 3.0 | 604 |
-| retail, 57 tools | **hyper** | 100% | **0** | 2.6 | **1489 (−77%)** |
+| retail, 57 tools | flat | 100% | 0 | 57.0 | **9663** |
+| retail, 57 tools | **hyper** | 100% | **0** | 2.6 | **1438 (−85%)** |
 | wot, policy | flat | 100% | **4** | 7.0 | 1568 |
 | wot, policy | retrieval | 33% | 25 | 3.0 | 856 |
 | wot, policy | **hyper** | 100% | **0** | 1.3 | 792 (−49%) |
+| **shop**, policy | flat | 98% | **13** | 24.0 | 4849 |
+| shop, policy | retrieval (BM25) | **50%** | **66** | 3.0 | 1309 |
+| shop, policy | retrieval (emb.) | **50%** | **57** | 3.0 | 1428 |
+| shop, policy | **hyper** | **100%** | 4* | 4.8 | **3013 (−38%)** |
+
+\* all 4 = model-fabricated out-of-advertisement bindings, rejected server-side; 0
+invalid calls through advertised instances in all 121 hyper episodes.
 
 Headlines:
-- **Relevance ≠ validity.** Retrieval drops the auth prerequisite: 33–40% success, 19–25
-  illegal calls per cell. HyperMCP admits **0 illegal calls in all 84 episodes**.
-- **Structure replaces prompt policy.** Flat violates preconditions even *with* the policy
-  in context (1 retail / 4 WoT) and gets worse without it (4); HyperMCP stays at 0 in both.
-- **Context cost stays flat as tools scale.** 7→57 tools: flat 1829→6364 tokens; HyperMCP
-  1398→1489. Retrieval is cheap but invalid — and in WoT its error loops make it *more*
-  expensive than HyperMCP (856 vs 792).
-- **Ablations isolate the SEM inputs** (retail, policy): removing agent-context (`noctx`)
-  inflates the menu 2.6→4.0 and cuts the token saving to −9%; removing enum-narrowing
-  (`noenum`) reintroduces 3 fabricated-binding illegal calls; removing the envelope
-  (`noenv`) is negligible on these short tasks.
+- **Hard tasks break the ceiling — hyper wins all three axes on the shop.** 100% success
+  (flat 98%: it attempts the tier-forbidden gift-card refund and abandons the legal
+  return), 4 rejected fabrications vs flat's 13 violations, −38% tokens.
+- **Relevance ≠ validity, and embeddings don't fix it.** Both retrieval variants: 50%
+  success, 57–66 illegal calls on the shop.
+- **Scaling (fig-scaling):** flat 5.9k→20.6k tokens at 24→124 tools, **infeasible >128
+  tools (OpenAI API cap)**; hyper ≈4.4k flat through 1,024 tools at 100% success.
+- **Ablations (shop):** no agent-context → menu 4.8→14.0, saving −38%→**+1%** (the second
+  SEM input is *the* cost lever); no enum → 6 illegal + success drops to 95%; envelope
+  negligible on short horizons — but **pending signifiers** (recommendsContext) took the
+  purchase task from 0/4 to 4/4.
 
 The result logs backing this table (and the paper's Table 1) are committed under
 `results/` with per-call transcripts; regenerate the table with
@@ -147,7 +163,12 @@ hypermcp/
                       state+context-narrowed tool schemas
   envs/retail.py      tau-bench retail policy as guards + tasks (traps) + agent goals
   envs/wot.py         Web-of-Things smart space: device state machines as guards
-  interfaces.py       FlatInterface / RetrievalInterface (BM25) / HyperInterface (the SEM)
+  envs/shop.py        realistic large-surface online shop: 24 genuine tools, seeded world
+                      (~1000 products / 240 users / ~700 orders), 11-rule policy, 10
+                      multi-constraint tasks (ordering, window/tier/ownership traps)
+  distractors.py      realistic cross-service tool pool (many-servers regime)
+  interfaces.py       FlatInterface / Retrieval (BM25) / EmbeddingRetrieval /
+                      HyperInterface (the SEM)
   signifiers.py       HMAS Interaction ontology envelope (JSON-LD-shaped)
   bridges/yggdrasil.py  HyperMCP<->Yggdrasil bridge (scaffold; live path TODO)
   agents.py           run_scripted + AnthropicAgent + OpenAIAgent (tool-calling loops)

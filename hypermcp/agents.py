@@ -47,7 +47,11 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
         if not intents:
             break
         name, args = intents[0]
-        if not interface.offers(state, name, args, task.instruction):
+        # A conformant client selects only among ADVERTISED tools (what the LLM sees),
+        # and only instances the interface offers. `name not in visible` also catches
+        # env bugs where a solvable action is never advertised.
+        if name not in visible or not interface.offers(state, name, args,
+                                                       task.instruction):
             res.blocked += 1          # not advertised: retrieval dropped it, or Hyper
             break                     # deems this instance invalid in the current state
         res.steps += 1
@@ -121,6 +125,8 @@ class AnthropicAgent:
                 content = obs.text
                 if obs.next_affordances:
                     content += f"\n[next valid actions: {', '.join(obs.next_affordances)}]"
+                if obs.pending:
+                    content += f"\n[not yet available: {'; '.join(obs.pending)}]"
                 results.append({"type": "tool_result", "tool_use_id": tu.id,
                                 "content": content, "is_error": not obs.ok})
             messages.append({"role": "user", "content": results})
@@ -182,6 +188,8 @@ class OpenAIAgent:
                 content = obs.text
                 if obs.next_affordances:
                     content += f"\n[next valid actions: {', '.join(obs.next_affordances)}]"
+                if obs.pending:
+                    content += f"\n[not yet available: {'; '.join(obs.pending)}]"
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
 
         res.success = task.goal(state)

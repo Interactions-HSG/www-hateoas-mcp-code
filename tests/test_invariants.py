@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 import random
 from hypermcp.core import AgentContext
-from hypermcp.envs import retail, wot
+from hypermcp.envs import retail, wot, shop
 from hypermcp.interfaces import HyperInterface, FlatInterface
 
 
@@ -66,8 +66,15 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
                 f"I5 violated: envelope is not the successor affordance set after {name}"
             for sig in obs.signifiers:
                 aff = env.by_name()[sig["signifies"]["tool"]]
-                for b in sig["context-conditions"]["eligible-bindings"]:
-                    assert aff.guard(s, b), f"I5 violated: ineligible binding in signifier"
+                if sig.get("currently-applicable") is False:   # pending signifier
+                    assert not aff.available(s) and aff.unlock_hint, \
+                        f"I5 violated: bogus pending signifier for {aff.name}"
+                    assert aff.name not in obs.next_affordances, \
+                        f"I5 violated: {aff.name} both pending and advertised"
+                else:
+                    for b in sig["context-conditions"]["eligible-bindings"]:
+                        assert aff.guard(s, b), \
+                            f"I5 violated: ineligible binding in signifier"
                 checks += 1
     return checks, saw_flat_illegal_offer
 
@@ -75,16 +82,18 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
 def main() -> None:
     total = 0
     flat_gap_seen = False
-    for env, ctx in [(retail.ENV, AgentContext(goal="cancel")),
-                     (retail.ENV, None),
-                     (wot.ENV, AgentContext(goal="run")),
-                     (wot.ENV, None)]:
-        c, gap = check_env(env, ctx)
+    for env, ctx, trials in [(retail.ENV, AgentContext(goal="cancel"), 40),
+                             (retail.ENV, None, 40),
+                             (wot.ENV, AgentContext(goal="run"), 40),
+                             (wot.ENV, None, 40),
+                             (shop.ENV, AgentContext(goal={"cancel", "return"}), 6),
+                             (shop.ENV, None, 6)]:
+        c, gap = check_env(env, ctx, trials=trials)
         total += c
         flat_gap_seen = flat_gap_seen or gap
         print(f"  {env.name:<7} ctx={str(ctx):<28} checks={c}")
     assert flat_gap_seen, "I4 expected: flat should advertise a guard-false instance"
-    print(f"OK  {total} instance-checks across retail+wot; "
+    print(f"OK  {total} instance-checks across retail+wot+shop; "
           f"I1/I2/I3/I5 hold, I4 confirmed (flat advertises invalid instances).")
 
 

@@ -25,11 +25,17 @@ class AgentContext:
     """The agent's own context, consumed by the Signifier Exposure Mechanism.
 
     In Vachtsevanou et al.'s SEM, exposure depends on environment state AND the agent's
-    context (its goals/abilities). `goal` selects purpose-relevant affordances; `abilities`
-    optionally restricts to affordances the agent can actually operate.
+    context (its goals/abilities). `goal` selects purpose-relevant affordances (a single
+    purpose or, for multi-constraint tasks, a set of purposes); `abilities` optionally
+    restricts to affordances the agent can actually operate.
     """
-    goal: str | None = None
+    goal: str | set[str] | None = None
     abilities: set[str] | None = None                  # None = no ability restriction
+
+    def goals(self) -> set[str] | None:
+        if self.goal is None:
+            return None
+        return self.goal if isinstance(self.goal, set) else {self.goal}
 
 
 def _default_candidates(_s: "State") -> list[dict]:
@@ -48,12 +54,18 @@ class Affordance:
     # (e.g. one per order the user owns). Default: a single empty binding.
     candidates: Callable[[State], list[dict]] = _default_candidates
     purposes: set[str] = field(default_factory=set)     # goals this affordance serves
+    # Unmet-context hint for the envelope's *pending* signifiers (recommendsContext in
+    # the HMAS Interaction ontology): shown when the affordance is goal-relevant but not
+    # applicable yet, so narrowing does not hide the path to the goal. Restores parity
+    # with flat, where the model can always read the precondition in the description.
+    unlock_hint: str | None = None
 
     def relevant(self, ctx: "AgentContext | None") -> bool:
         """Agent-context filter (SEM): affordance is relevant to the agent's context."""
         if ctx is None:
             return True
-        if self.purposes and ctx.goal is not None and ctx.goal not in self.purposes:
+        goals = ctx.goals()
+        if self.purposes and goals is not None and not (goals & self.purposes):
             return False
         if ctx.abilities is not None and self.name not in ctx.abilities:
             return False
@@ -75,11 +87,15 @@ class Affordance:
         if s is not None:
             elig = self.eligible(s)
             params = copy.deepcopy(self.parameters)
+            enum_vals: list[str] = []
             for key, spec in params.get("properties", {}).items():
                 vals = sorted({c[key] for c in elig if key in c})
-                if vals:
+                # Narrow only when the domain is small enough to be an enum an LLM can
+                # use; a large domain (e.g. every in-stock product) stays free-form.
+                if 0 < len(vals) <= 16:
                     spec["enum"] = vals                 # state-narrowed parameter domain
-            hint = ", ".join(sorted({str(v) for c in elig for v in c.values()}))
+                    enum_vals.extend(str(v) for v in vals)
+            hint = ", ".join(sorted(set(enum_vals)))
             if hint:
                 desc = f"{desc} [currently valid for: {hint}]"
         return {"name": self.name, "description": desc, "input_schema": params}
@@ -91,6 +107,9 @@ class Observation:
     text: str
     # HyperMCP envelope: names of the successor affordances (compact hint for the LLM) ...
     next_affordances: list[str] = field(default_factory=list)
+    # ... goal-relevant affordances that are NOT yet applicable, with their unmet context
+    # ("place_order (requires a non-empty cart)") -- pending signifiers ...
+    pending: list[str] = field(default_factory=list)
     # ... and the same envelope as HMAS-Interaction-ontology signifiers (for MAS interop).
     signifiers: list[dict] = field(default_factory=list)
 

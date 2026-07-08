@@ -19,38 +19,25 @@ try:
 except Exception:
     pass
 
-from .core import Env, Affordance
-from .envs import retail, wot
+from .envs import retail, wot, shop
 from .interfaces import INTERFACES, ABLATIONS, HyperInterface
+from .distractors import pad as pad_distractors
 from .metrics import aggregate
 from .agents import run_scripted, AnthropicAgent, OpenAIAgent
 
-ENVS = {"retail": retail.ENV, "wot": wot.ENV}
+ENVS = {"retail": retail.ENV, "wot": wot.ENV, "shop": shop.ENV}
 
 
-def pad_distractors(env: Env, n: int) -> Env:
-    """Add n never-applicable 'other server' tools, mimicking a host wired to many MCP
-    servers where most tools are irrelevant to the task. Flat advertises them all
-    (context blow-up); HyperMCP never exposes them (guard is always false)."""
-    if n <= 0:
-        return env
-    extra = [Affordance(f"aux_op_{i}",
-                        f"Auxiliary operation {i} on an unrelated backend subsystem.",
-                        {"type": "object", "properties": {}},
-                        guard=lambda s, a: False, effect=lambda s, a: "noop",
-                        rel="action") for i in range(n)]
-    return Env(env.name, list(env.affordances) + extra, env.tasks, env.policy)
-
-
-def build_agent(kind: str, model: str, base_url: str | None):
+def build_agent(kind: str, model: str, base_url: str | None, max_steps: int):
     if kind == "scripted":
-        return lambda iface, env, task: run_scripted(iface, env, task)
+        return lambda iface, env, task: run_scripted(iface, env, task,
+                                                     max_steps=max_steps)
     if kind == "anthropic":
         a = AnthropicAgent(model=model)
-        return lambda iface, env, task: a.run(iface, env, task)
+        return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
     if kind == "openai":
         a = OpenAIAgent(model=model, base_url=base_url)
-        return lambda iface, env, task: a.run(iface, env, task)
+        return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
     raise SystemExit(f"unknown agent: {kind}")
 
 
@@ -59,7 +46,7 @@ def build_interfaces(env, names: list[str], k: int, ablations: bool):
     out = []
     for name in names:
         cls = INTERFACES[name]
-        iface = cls(env, k=k) if name == "retrieval" else cls(env)
+        iface = cls(env, k=k) if name.startswith("retrieval") else cls(env)
         out.append((name, iface))
         if ablations and name == "hyper":
             for vlabel, kwargs in ABLATIONS.items():
@@ -83,7 +70,12 @@ def main() -> None:
                    help="omit the natural-language policy from the prompt (tests whether "
                         "the SEM enforces validity structurally, without prompt rules)")
     p.add_argument("--distractors", type=int, default=0,
-                   help="pad the env with N never-applicable tools (many-servers regime)")
+                   help="pad the env with N realistic other-service tools "
+                        "(many-servers regime)")
+    p.add_argument("--max-steps", type=int, default=8,
+                   help="max perceive-act cycles per task (shop tasks need ~12)")
+    p.add_argument("--tasks", default=None,
+                   help="comma-separated task ids to run (default: all)")
     p.add_argument("--out", default=None, help="directory to write per-run JSONL logs")
     args = p.parse_args()
 
@@ -91,7 +83,10 @@ def main() -> None:
     if args.no_policy:
         env.policy = ""                                  # structural validity only
     env = pad_distractors(env, args.distractors)
-    agent = build_agent(args.agent, args.model, args.base_url)
+    if args.tasks:
+        keep = set(args.tasks.split(","))
+        env = dataclasses.replace(env, tasks=[t for t in env.tasks if t.id in keep])
+    agent = build_agent(args.agent, args.model, args.base_url, args.max_steps)
     interfaces = build_interfaces(env, args.interfaces.split(","), args.k, args.ablations)
     results = []
 

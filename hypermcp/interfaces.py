@@ -122,6 +122,61 @@ class RetrievalInterface(_Base):
         return self._call_checked(state, name, args, next_affs=[])
 
 
+class EmbeddingRetrievalInterface(_Base):
+    """B1': relevance-based top-k retrieval over dense embeddings (stronger than BM25).
+
+    Uses OpenAI text-embedding-3-small; tool vectors are computed once per interface,
+    the query (task + last observation) is embedded per step. Like BM25 retrieval, this
+    optimises textual relevance and has no notion of state or validity.
+    """
+    label = "retrieval-emb"
+
+    def __init__(self, env: Env, k: int = 3, model: str = "text-embedding-3-small"):
+        super().__init__(env)
+        self.k = k
+        self.model = model
+        self._client = None
+        self._tool_vecs: dict[str, list[float]] | None = None
+        self._query_cache: dict[str, list[float]] = {}
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        if self._client is None:
+            import os
+            from openai import OpenAI
+            self._client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        resp = self._client.embeddings.create(model=self.model, input=texts)
+        return [d.embedding for d in resp.data]
+
+    def _rank(self, query: str) -> list[str]:
+        if self._tool_vecs is None:
+            docs = [f"{a.name} {a.description}" for a in self.env.affordances]
+            vecs = []
+            for i in range(0, len(docs), 512):          # API batch limit safety
+                vecs.extend(self._embed(docs[i:i + 512]))
+            self._tool_vecs = {a.name: v for a, v in zip(self.env.affordances, vecs)}
+        if query not in self._query_cache:
+            self._query_cache[query] = self._embed([query])[0]
+        q = self._query_cache[query]
+        qn = math.sqrt(sum(x * x for x in q)) or 1.0
+
+        def cos(v):
+            vn = math.sqrt(sum(x * x for x in v)) or 1.0
+            return sum(a * b for a, b in zip(q, v)) / (qn * vn)
+
+        return sorted(self._tool_vecs, key=lambda n: cos(self._tool_vecs[n]),
+                      reverse=True)[:self.k]
+
+    def list_tools(self, state: State, context: str) -> list[Affordance]:
+        top = set(self._rank(context))
+        return [a for a in self.env.affordances if a.name in top]
+
+    def offers(self, state: State, name: str, args: dict, context: str = "") -> bool:
+        return name in set(self._rank(context))
+
+    def call(self, state: State, name: str, args: dict) -> Observation:
+        return self._call_checked(state, name, args, next_affs=[])
+
+
 class HyperInterface(_Base):
     """HyperMCP: a Signifier Exposure Mechanism (SEM) for MCP tool surfaces.
 
@@ -173,18 +228,30 @@ class HyperInterface(_Base):
         if not aff.guard(state, args):
             return Observation(ok=False,
                                text=f"ERROR: precondition violated for {name}({args})",
-                               next_affordances=self._envelope(state))
+                               next_affordances=self._envelope(state),
+                               pending=self._pending(state))
         text = aff.effect(state, args)
         # Envelope AFTER the effect: results advertise the *successor* affordances
         # (conformance criterion iii -- hypermedia as the engine of application state).
         return Observation(ok=True, text=text,
                            next_affordances=self._envelope(state),
+                           pending=self._pending(state),
                            signifiers=self._signifiers(state))
 
     def _envelope(self, state: State) -> list[str]:
         if not self.use_envelope:
             return []
         return [a.name for a in self.list_tools(state, "")]
+
+    def _pending(self, state: State) -> list[str]:
+        """Pending signifiers: goal-relevant affordances that are not applicable yet,
+        with their unmet context (hmas:recommendsContext). Advertised as information,
+        not as callable tools -- criterion (ii) is untouched."""
+        if not self.use_envelope:
+            return []
+        return [f"{a.name} ({a.unlock_hint})" for a in self.env.affordances
+                if a.unlock_hint and a.relevant(self._ctx())
+                and not a.available(state)]
 
     def _signifiers(self, state: State) -> list[dict]:
         """HMAS-Interaction-ontology view of the envelope (see signifiers.py): the same
@@ -194,7 +261,8 @@ class HyperInterface(_Base):
         return envelope(self.env.affordances, state, self._ctx())
 
 
-INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface, "hyper": HyperInterface}
+INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface,
+              "retrieval-emb": EmbeddingRetrievalInterface, "hyper": HyperInterface}
 
 # Named ablation variants of HyperMCP (kwargs applied at construction).
 ABLATIONS = {
