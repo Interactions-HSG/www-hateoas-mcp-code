@@ -197,4 +197,5 @@ TASKS = [
          agent_ctx=AgentContext(goal="cancel")),
 ]
 
-ENV = Env(name="retail", affordances=AFFORDANCES, tasks=TASKS, policy=POLICY)
+ENV = Env(name="retail", affordances=AFFORDANCES, tasks=TASKS, policy=POLICY,
+          persona="You are a customer-service agent.")

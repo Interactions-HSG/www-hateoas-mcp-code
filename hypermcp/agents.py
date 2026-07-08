@@ -33,7 +33,9 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
                          if a.rel == "authenticate"), None)
             if auth is not None:
                 res.steps += 1
-                obs = interface.call(state, auth.name, state.scratch.get("creds", {}))
+                creds = state.scratch.get("creds", {})
+                obs = interface.call(state, auth.name, creds)
+                res.calls.append({"tool": auth.name, "args": creds, "ok": obs.ok})
                 if not obs.ok:
                     res.illegal_calls += 1
                 continue
@@ -50,6 +52,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
             break                     # deems this instance invalid in the current state
         res.steps += 1
         obs = interface.call(state, name, args)
+        res.calls.append({"tool": name, "args": args, "ok": obs.ok})
         if not obs.ok:
             res.illegal_calls += 1
         intents.pop(0)
@@ -62,7 +65,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
 # Shared helpers for LLM agents
 # --------------------------------------------------------------------------- #
 def _system_prompt(env: Env) -> str:
-    base = ("You are a customer-service agent. Fulfil the user's request by calling the "
+    base = (f"{env.persona} Fulfil the user's request by calling the "
             "available tools. Only call a tool when its use is appropriate.")
     # HyperMCP's claim: the SEM makes the textual policy unnecessary (validity is
     # structural). When env.policy is empty (--no-policy), the agent gets no rules text.
@@ -93,9 +96,13 @@ class AnthropicAgent:
         for _ in range(max_steps):
             tools = interface.tool_specs(state, _context(task, last_obs))
             res.menu_sizes.append(len(tools))
+            kwargs = {}
+            if tools and getattr(interface, "serial_calls", False):
+                # Conformant hypermedia client: one affordance per perceive-act cycle.
+                kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
             resp = self.client.messages.create(
                 model=self.model, max_tokens=self.max_tokens,
-                system=_system_prompt(env), tools=tools, messages=messages)
+                system=_system_prompt(env), tools=tools, messages=messages, **kwargs)
             res.prompt_tokens += resp.usage.input_tokens
             res.completion_tokens += resp.usage.output_tokens
             messages.append({"role": "assistant", "content": resp.content})
@@ -107,6 +114,7 @@ class AnthropicAgent:
             for tu in tool_uses:
                 res.steps += 1
                 obs = interface.call(state, tu.name, dict(tu.input))
+                res.calls.append({"tool": tu.name, "args": dict(tu.input), "ok": obs.ok})
                 if not obs.ok:
                     res.illegal_calls += 1
                 last_obs = obs.text
@@ -152,6 +160,9 @@ class OpenAIAgent:
             kwargs = dict(model=self.model, max_tokens=self.max_tokens, messages=messages)
             if tools:                                    # OpenAI rejects an empty tools list
                 kwargs["tools"] = tools
+                if getattr(interface, "serial_calls", False):
+                    # Conformant hypermedia client: one affordance per perceive-act cycle.
+                    kwargs["parallel_tool_calls"] = False
             resp = self.client.chat.completions.create(**kwargs)
             if resp.usage:
                 res.prompt_tokens += resp.usage.prompt_tokens
@@ -164,6 +175,7 @@ class OpenAIAgent:
                 res.steps += 1
                 args = json.loads(tc.function.arguments or "{}")
                 obs = interface.call(state, tc.function.name, args)
+                res.calls.append({"tool": tc.function.name, "args": args, "ok": obs.ok})
                 if not obs.ok:
                     res.illegal_calls += 1
                 last_obs = obs.text

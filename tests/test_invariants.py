@@ -9,6 +9,9 @@ Run: python -m tests.test_invariants
   I3 (enum):        a HyperMCP tool schema's parameter enum == the eligible bindings.
   I4 (baseline):    the flat interface advertises instances whose guard is FALSE
                     -> baselines *can* admit invalid calls (the gap we close).
+  I5 (envelope):    the envelope returned with a result advertises exactly the
+                    affordances valid in the SUCCESSOR state (post-transition), and
+                    every signifier in it carries only guard-satisfying bindings.
 """
 from __future__ import annotations
 import copy
@@ -56,7 +59,16 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
             if not offered:
                 break
             name, args = random.choice(offered)
-            hyper.call(s, name, args)                                        # advance state
+            obs = hyper.call(s, name, args)                                  # advance state
+            want_next = sorted(a.name for a in env.affordances
+                               if a.available(s) and a.relevant(ctx))        # I5
+            assert sorted(obs.next_affordances) == want_next, \
+                f"I5 violated: envelope is not the successor affordance set after {name}"
+            for sig in obs.signifiers:
+                aff = env.by_name()[sig["signifies"]["tool"]]
+                for b in sig["context-conditions"]["eligible-bindings"]:
+                    assert aff.guard(s, b), f"I5 violated: ineligible binding in signifier"
+                checks += 1
     return checks, saw_flat_illegal_offer
 
 
@@ -73,7 +85,7 @@ def main() -> None:
         print(f"  {env.name:<7} ctx={str(ctx):<28} checks={c}")
     assert flat_gap_seen, "I4 expected: flat should advertise a guard-false instance"
     print(f"OK  {total} instance-checks across retail+wot; "
-          f"I1/I2/I3 hold, I4 confirmed (flat advertises invalid instances).")
+          f"I1/I2/I3/I5 hold, I4 confirmed (flat advertises invalid instances).")
 
 
 if __name__ == "__main__":

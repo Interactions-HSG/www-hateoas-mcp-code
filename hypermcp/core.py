@@ -89,7 +89,10 @@ class Affordance:
 class Observation:
     ok: bool
     text: str
-    next_affordances: list[str] = field(default_factory=list)  # HyperMCP envelope
+    # HyperMCP envelope: names of the successor affordances (compact hint for the LLM) ...
+    next_affordances: list[str] = field(default_factory=list)
+    # ... and the same envelope as HMAS-Interaction-ontology signifiers (for MAS interop).
+    signifiers: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -109,6 +112,8 @@ class Env:
     affordances: list[Affordance]
     tasks: list[Task]
     policy: str = ""                                     # natural-language policy (B0/B1)
+    # Who the agent is in this environment (system-prompt persona; interface-independent).
+    persona: str = "You are an agent acting on behalf of the user."
 
     def by_name(self) -> dict[str, Affordance]:
         return {a.name: a for a in self.affordances}

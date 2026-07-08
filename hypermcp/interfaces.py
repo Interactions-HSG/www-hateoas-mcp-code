@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 from .core import State, Env, Observation, Affordance, AgentContext
+from .signifiers import envelope
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +63,9 @@ class BM25:
 # --------------------------------------------------------------------------- #
 class _Base:
     label = "base"
+    # Should the client execute tool calls serially (one per perception)? Vanilla MCP
+    # hosts batch parallel calls, so the baselines keep that default.
+    serial_calls = False
 
     def __init__(self, env: Env):
         self.env = env
@@ -132,6 +136,12 @@ class HyperInterface(_Base):
       use_envelope -- return the next-step affordances with each result
     """
     label = "hyper"
+    # Conformance criterion (iv): the client selects only *advertised* instances. A batch
+    # of parallel calls is selected against ONE state, but each call transitions it, so a
+    # later call in the batch can become invalid (observed live: the model batched both
+    # auth tools; the first authenticated, invalidating the second). A conformant
+    # hypermedia client therefore follows one affordance per perceive-act cycle.
+    serial_calls = True
 
     def __init__(self, env: Env, use_context: bool = True, use_enum: bool = True,
                  use_envelope: bool = True):
@@ -159,13 +169,29 @@ class HyperInterface(_Base):
 
     def call(self, state: State, name: str, args: dict) -> Observation:
         aff = self._by[name]
-        nxt = [a.name for a in self.list_tools(state, "")] if self.use_envelope else []
         # Safety net: a conformant client only selects advertised, eligible affordances.
         if not aff.guard(state, args):
             return Observation(ok=False,
                                text=f"ERROR: precondition violated for {name}({args})",
-                               next_affordances=nxt)
-        return Observation(ok=True, text=aff.effect(state, args), next_affordances=nxt)
+                               next_affordances=self._envelope(state))
+        text = aff.effect(state, args)
+        # Envelope AFTER the effect: results advertise the *successor* affordances
+        # (conformance criterion iii -- hypermedia as the engine of application state).
+        return Observation(ok=True, text=text,
+                           next_affordances=self._envelope(state),
+                           signifiers=self._signifiers(state))
+
+    def _envelope(self, state: State) -> list[str]:
+        if not self.use_envelope:
+            return []
+        return [a.name for a in self.list_tools(state, "")]
+
+    def _signifiers(self, state: State) -> list[dict]:
+        """HMAS-Interaction-ontology view of the envelope (see signifiers.py): the same
+        exposed affordances, rendered as signifiers for Hypermedia MAS interop."""
+        if not self.use_envelope:
+            return []
+        return envelope(self.env.affordances, state, self._ctx())
 
 
 INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface, "hyper": HyperInterface}

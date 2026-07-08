@@ -118,4 +118,6 @@ TASKS = [
          agent_ctx=AgentContext(goal="run")),
 ]
 
-ENV = Env(name="wot", affordances=AFFORDANCES, tasks=TASKS, policy=POLICY)
+ENV = Env(name="wot", affordances=AFFORDANCES, tasks=TASKS, policy=POLICY,
+          persona="You operate the devices of a smart space on behalf of the user; "
+                  "use the tools to act directly rather than asking the user to act.")

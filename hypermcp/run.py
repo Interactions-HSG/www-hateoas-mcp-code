@@ -128,6 +128,7 @@ def main() -> None:
         with path.open("w") as f:
             for r in results:
                 d = dataclasses.asdict(r)
+                d["env"] = args.env
                 d["avg_menu"] = r.avg_menu
                 d["total_tokens"] = r.total_tokens
                 f.write(json.dumps(d) + "\n")
