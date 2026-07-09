@@ -26,9 +26,12 @@ import matplotlib.pyplot as plt
 
 from .report import load as load_result_rows
 
-# Reference palette (dataviz skill, categorical slots 1-4, light mode) + ink tokens.
-SLOT = {"flat": "#2a78d6", "retrieval": "#1baf7a",
-        "retrieval-emb": "#eda100", "hyper": "#008300"}
+# Reference palette (dataviz skill) + ink tokens. Hues chosen for maximum
+# separation of the marks that sit close together: the two retrieval curves
+# overlap in the scaling plot, so they take opposite hues (orange vs violet);
+# HyperMCP is the only green (its neighbour is orange), Flat the only blue.
+SLOT = {"flat": "#2a78d6", "retrieval": "#eb6834",
+        "retrieval-emb": "#4a3aa7", "hyper": "#008300"}
 NAME = {"flat": "Flat", "retrieval": "Retrieval (BM25)",
         "retrieval-emb": "Retrieval (emb.)", "hyper": "HyperMCP"}
 MARKER = {"flat": "o", "retrieval": "s", "retrieval-emb": "D", "hyper": "^"}
@@ -89,8 +92,8 @@ def fig_scaling(rows, outdir: pathlib.Path) -> None:
         if not pts:
             continue
         px, py = zip(*sorted(pts))
-        ax.plot(px, py, color=SLOT[iface], lw=1.4, marker=MARKER[iface], ms=3.4,
-                mec="white", mew=0.6, label=NAME[iface], clip_on=False)
+        ax.plot(px, py, color=SLOT[iface], lw=1.4, marker=MARKER[iface], ms=4.2,
+                mec="white", mew=0.9, label=NAME[iface], clip_on=False, zorder=3)
         ends[iface] = (px[-1], py[-1])
 
     ax.set_xscale("log")
@@ -103,18 +106,21 @@ def fig_scaling(rows, outdir: pathlib.Path) -> None:
     ax.set_ylabel("avg. tokens per task")
     ax.yaxis.set_major_formatter(lambda v, _: f"{v/1000:g}k" if v else "0")
 
-    # Selective direct labels: the two lines the story is about.
+    # Selective direct labels: the two endpoints the story is about. The flat
+    # label goes up-and-left of its marker so it never crowds the infeasibility
+    # caption, which sits centred in the shaded band well below the top edge.
     if "flat" in ends:
         x, y = ends["flat"]
         ax.annotate(f"{y/1000:.1f}k", (x, y), textcoords="offset points",
-                    xytext=(0, 5), ha="center", fontsize=6.5, color=INK)
+                    xytext=(-4, 4), ha="right", va="bottom", fontsize=6.5, color=INK)
     if "hyper" in ends:
         x, y = ends["hyper"]
         ax.annotate(f"{y/1000:.1f}k", (x, y), textcoords="offset points",
-                    xytext=(0, 5), ha="center", fontsize=6.5, color=INK)
-    ax.text(API_CAP * 1.07, ax.get_ylim()[1] * 0.97,
-            "flat infeasible:\nAPI rejects >128 tools",
-            fontsize=6.0, color=MUTED, va="top")
+                    xytext=(0, 6), ha="center", fontsize=6.5, color=INK)
+    band_mid = (API_CAP * 1400) ** 0.5           # geometric centre of the log band
+    ax.text(band_mid, ax.get_ylim()[1] * 0.6,
+            "flat infeasible\nabove 128 tools\n(API limit)",
+            fontsize=6.0, color=MUTED, va="center", ha="center", linespacing=1.4)
     ax.legend(loc="center left", handlelength=1.6, borderaxespad=0.4)
     fig.tight_layout(pad=0.4)
     fig.savefig(outdir / "fig-scaling.pdf")
