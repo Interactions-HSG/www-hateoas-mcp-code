@@ -50,9 +50,29 @@ channel and `notifications/tools/list_changed` as the perception update.
 1. **Ontology terms (blocking Listing 1 + `signifiers.py`).** The HMAS Interaction
    ontology IRIs and the context-shape idiom used here are placeholders — confirm against
    the published vocabularies and the Yggdrasil implementation before freezing.
-2. **Live Yggdrasil bridge.** `bridges/yggdrasil.py` needs: the workspace/artifact
-   endpoints to pin, HMAS signifier RDF → `Affordance` parsing (rdflib behind an extra),
-   and affordance-form invocation as the effect.
+2. **Live Yggdrasil bridge.** `bridges/yggdrasil.py` is a scaffold; the demo plan is
+   staged: **(0)** fixture round-trip — parse real signifier payloads into `Affordance`s
+   (rdflib behind an extra) and drive the scripted agent, no server needed; **(1)** live
+   mechanism demo against a running Yggdrasil (GET signifiers → tool menu → act →
+   re-GET: over the bridge, validity is decided server-side, so perceive = re-fetch and
+   local guards disappear); **(2)** an LLM run over the live bridge with the `wot`
+   tasks — one results row answering "does this work outside your simulated envs?";
+   **(3, optional)** wrap the bridge as an actual MCP server (`tools/list_changed`) so
+   any off-the-shelf MCP host can drive the smart space live.
+
+   **Needed from Danai** (stage 0 is unblocked by the first bullet alone):
+   - example signifier RDF payloads *as served by Yggdrasil*, for parser fixtures, plus
+     the IRI/shape confirmation of question 1;
+   - which Yggdrasil branch/fork has the **runnable SEM** (conditional signifier
+     exposure) and how to run it (gradle/docker) — this single answer decides whether
+     stage 1 is days or weeks; if none is runnable, the fallback is static signifiers
+     with bridge-side exposure conditions (a weaker, "HMAS-interoperable" claim, and the
+     paper's §4 bridge sentence must be weakened accordingly);
+   - the workspace/artifact HTTP endpoints to pin, and how an agent profile/WebID
+     conditions exposure (`recommendsAbility`/`recommendsContext`), so `AgentContext`
+     maps onto Yggdrasil's second SEM input;
+   - a review of the mapping signifier → MCP tool (action spec → JSON schema; form
+     invocation → effect).
 3. **Formal SEM alignment.** Does Eq. 3 (`A(s,c)` with relevance = goal ∈ purposes ∧
    ability restriction) faithfully specialise the Annals-of-Math-&-AI SEM? What should the
    LLM-agent analogue of an *ability* be?
