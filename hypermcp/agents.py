@@ -3,24 +3,54 @@
 - run_scripted: deterministic, no API key. Authenticates if required, then attempts the
   task's intended action iff the interface makes it visible. Exercises the full pipeline
   and reproduces the mechanism-level difference (illegal calls, menu size, blocking).
-- AnthropicAgent / OpenAIAgent: real LLM tool-calling loops (gated on an API key), where
-  the model re-reads the advertised tools each step. This is where the paper's headline
-  numbers come from.
+- OpenAIAgent: a real LLM tool-calling loop (gated on an API key; also serves open
+  models via an OpenAI-compatible endpoint), where the model re-reads the advertised
+  tools each step. This is where the paper's headline numbers come from.
 """
 from __future__ import annotations
 import json
 import os
-from .core import Env, Task, State
+from .core import Env, Task, State, Observation
 from .metrics import RunResult
+
+
+# --------------------------------------------------------------------------- #
+# Helpers shared by all agents (scripted and LLM).
+# --------------------------------------------------------------------------- #
+def _start(interface, task: Task, model: str) -> tuple[State, RunResult]:
+    """Fresh state + run record; hands the task's agent context to the interface (SEM)."""
+    interface.agent_ctx = task.agent_ctx
+    return task.init(), RunResult(task.id, interface.label, model, success=False)
+
+
+def _execute(interface, state: State, res: RunResult, name: str,
+             args: dict) -> Observation:
+    """Execute one tool call and record it in the run metrics."""
+    res.steps += 1
+    obs = interface.call(state, name, args)
+    res.calls.append({"tool": name, "args": args, "ok": obs.ok})
+    if not obs.ok:
+        res.illegal_calls += 1
+    return obs
+
+
+def _result_text(obs: Observation) -> str:
+    """The tool-result content handed back to the model: the observation plus, under
+    HyperMCP, the signifier envelope (next-step and pending affordances). Any LLM loop
+    MUST use this so the envelope rendering cannot drift between providers."""
+    content = obs.text
+    if obs.next_affordances:
+        content += f"\n[next valid actions: {', '.join(obs.next_affordances)}]"
+    if obs.pending:
+        content += f"\n[not yet available: {'; '.join(obs.pending)}]"
+    return content
 
 
 # --------------------------------------------------------------------------- #
 # Scripted agent (no key) -- pipeline smoke test.
 # --------------------------------------------------------------------------- #
 def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResult:
-    state = task.init()
-    interface.agent_ctx = task.agent_ctx                 # SEM: expose per agent context
-    res = RunResult(task.id, interface.label, "scripted", success=False)
+    state, res = _start(interface, task, "scripted")
     intents = list(task.scripted_intent)
 
     for _ in range(max_steps):
@@ -32,12 +62,8 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
             auth = next((a for a in interface.list_tools(state, task.instruction)
                          if a.rel == "authenticate"), None)
             if auth is not None:
-                res.steps += 1
-                creds = state.scratch.get("creds", {})
-                obs = interface.call(state, auth.name, creds)
-                res.calls.append({"tool": auth.name, "args": creds, "ok": obs.ok})
-                if not obs.ok:
-                    res.illegal_calls += 1
+                _execute(interface, state, res, auth.name,
+                         state.scratch.get("creds", {}))
                 continue
             # auth prerequisite not advertised (e.g. B1 retrieved only action tools)
             res.blocked += 1
@@ -54,11 +80,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
                                                        task.instruction):
             res.blocked += 1          # not advertised: retrieval dropped it, or Hyper
             break                     # deems this instance invalid in the current state
-        res.steps += 1
-        obs = interface.call(state, name, args)
-        res.calls.append({"tool": name, "args": args, "ok": obs.ok})
-        if not obs.ok:
-            res.illegal_calls += 1
+        _execute(interface, state, res, name, args)
         intents.pop(0)
 
     res.success = task.goal(state)
@@ -81,61 +103,6 @@ def _context(task: Task, last_obs: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Anthropic tool-calling loop
-# --------------------------------------------------------------------------- #
-class AnthropicAgent:
-    def __init__(self, model: str = "claude-opus-4-8", max_tokens: int = 1024):
-        from anthropic import Anthropic
-        self.client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        self.model = model
-        self.max_tokens = max_tokens
-
-    def run(self, interface, env: Env, task: Task, max_steps: int = 8) -> RunResult:
-        state = task.init()
-        interface.agent_ctx = task.agent_ctx             # SEM: expose per agent context
-        res = RunResult(task.id, interface.label, self.model, success=False)
-        messages = [{"role": "user", "content": task.instruction}]
-        last_obs = ""
-
-        for _ in range(max_steps):
-            tools = interface.tool_specs(state, _context(task, last_obs))
-            res.menu_sizes.append(len(tools))
-            kwargs = {}
-            if tools and getattr(interface, "serial_calls", False):
-                # Conformant hypermedia client: one affordance per perceive-act cycle.
-                kwargs["tool_choice"] = {"type": "auto", "disable_parallel_tool_use": True}
-            resp = self.client.messages.create(
-                model=self.model, max_tokens=self.max_tokens,
-                system=_system_prompt(env), tools=tools, messages=messages, **kwargs)
-            res.prompt_tokens += resp.usage.input_tokens
-            res.completion_tokens += resp.usage.output_tokens
-            messages.append({"role": "assistant", "content": resp.content})
-
-            tool_uses = [b for b in resp.content if b.type == "tool_use"]
-            if not tool_uses:
-                break
-            results = []
-            for tu in tool_uses:
-                res.steps += 1
-                obs = interface.call(state, tu.name, dict(tu.input))
-                res.calls.append({"tool": tu.name, "args": dict(tu.input), "ok": obs.ok})
-                if not obs.ok:
-                    res.illegal_calls += 1
-                last_obs = obs.text
-                content = obs.text
-                if obs.next_affordances:
-                    content += f"\n[next valid actions: {', '.join(obs.next_affordances)}]"
-                if obs.pending:
-                    content += f"\n[not yet available: {'; '.join(obs.pending)}]"
-                results.append({"type": "tool_result", "tool_use_id": tu.id,
-                                "content": content, "is_error": not obs.ok})
-            messages.append({"role": "user", "content": results})
-
-        res.success = task.goal(state)
-        return res
-
-
-# --------------------------------------------------------------------------- #
 # OpenAI-compatible tool-calling loop (for open models via an OpenAI-style endpoint)
 # --------------------------------------------------------------------------- #
 class OpenAIAgent:
@@ -153,9 +120,7 @@ class OpenAIAgent:
                               "parameters": s["input_schema"]}} for s in specs], len(specs)
 
     def run(self, interface, env: Env, task: Task, max_steps: int = 8) -> RunResult:
-        state = task.init()
-        interface.agent_ctx = task.agent_ctx             # SEM: expose per agent context
-        res = RunResult(task.id, interface.label, self.model, success=False)
+        state, res = _start(interface, task, self.model)
         messages = [{"role": "system", "content": _system_prompt(env)},
                     {"role": "user", "content": task.instruction}]
         last_obs = ""
@@ -166,7 +131,7 @@ class OpenAIAgent:
             kwargs = dict(model=self.model, max_tokens=self.max_tokens, messages=messages)
             if tools:                                    # OpenAI rejects an empty tools list
                 kwargs["tools"] = tools
-                if getattr(interface, "serial_calls", False):
+                if interface.serial_calls:
                     # Conformant hypermedia client: one affordance per perceive-act cycle.
                     kwargs["parallel_tool_calls"] = False
             resp = self.client.chat.completions.create(**kwargs)
@@ -178,19 +143,11 @@ class OpenAIAgent:
             if not msg.tool_calls:
                 break
             for tc in msg.tool_calls:
-                res.steps += 1
                 args = json.loads(tc.function.arguments or "{}")
-                obs = interface.call(state, tc.function.name, args)
-                res.calls.append({"tool": tc.function.name, "args": args, "ok": obs.ok})
-                if not obs.ok:
-                    res.illegal_calls += 1
+                obs = _execute(interface, state, res, tc.function.name, args)
                 last_obs = obs.text
-                content = obs.text
-                if obs.next_affordances:
-                    content += f"\n[next valid actions: {', '.join(obs.next_affordances)}]"
-                if obs.pending:
-                    content += f"\n[not yet available: {'; '.join(obs.pending)}]"
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
+                messages.append({"role": "tool", "tool_call_id": tc.id,
+                                 "content": _result_text(obs)})
 
         res.success = task.goal(state)
         return res

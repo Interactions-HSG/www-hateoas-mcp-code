@@ -91,11 +91,11 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python
 .venv/bin/python -m hypermcp.run --env wot --ablations   # WoT + SEM ablations
 .venv/bin/python -m hypermcp.run --env shop --max-steps 12   # realistic large-surface shop
 
-# Real LLM numbers (copy .env.example -> .env and set OPENAI_API_KEY or ANTHROPIC_API_KEY):
+# Real LLM numbers (copy .env.example -> .env and set OPENAI_API_KEY; open models run
+# via an OpenAI-compatible endpoint with --base-url / OPENAI_BASE_URL):
 .venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
 .venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --no-policy --out results
 .venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini --distractors 50 --out results
-.venv/bin/python -m hypermcp.run --agent anthropic --model claude-opus-4-8 --ablations
 
 # Aggregate all logged runs into a per-(model, condition, interface) table:
 .venv/bin/python -m hypermcp.report
@@ -171,7 +171,7 @@ hypermcp/
                       HyperInterface (the SEM)
   signifiers.py       HMAS Interaction ontology envelope (JSON-LD-shaped)
   bridges/yggdrasil.py  HyperMCP<->Yggdrasil bridge (scaffold; live path TODO)
-  agents.py           run_scripted + AnthropicAgent + OpenAIAgent (tool-calling loops)
+  agents.py           run_scripted + OpenAIAgent (LLM tool-calling loop)
   metrics.py          RunResult + aggregate
   report.py           aggregate results/*.jsonl into a comparison table
   run.py              CLI

@@ -4,7 +4,7 @@ Examples:
   python -m hypermcp.run                              # scripted, flat/retrieval/hyper
   python -m hypermcp.run --ablations                 # + hyper-noctx/-noenum/-noenv
   python -m hypermcp.run --env wot --ablations
-  python -m hypermcp.run --agent anthropic --model claude-opus-4-8 --ablations --out results
+  python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
 """
 from __future__ import annotations
 import argparse
@@ -23,7 +23,7 @@ from .envs import retail, wot, shop
 from .interfaces import INTERFACES, ABLATIONS, HyperInterface
 from .distractors import pad as pad_distractors
 from .metrics import aggregate
-from .agents import run_scripted, AnthropicAgent, OpenAIAgent
+from .agents import run_scripted, OpenAIAgent
 
 ENVS = {"retail": retail.ENV, "wot": wot.ENV, "shop": shop.ENV}
 
@@ -32,9 +32,6 @@ def build_agent(kind: str, model: str, base_url: str | None, max_steps: int):
     if kind == "scripted":
         return lambda iface, env, task: run_scripted(iface, env, task,
                                                      max_steps=max_steps)
-    if kind == "anthropic":
-        a = AnthropicAgent(model=model)
-        return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
     if kind == "openai":
         a = OpenAIAgent(model=model, base_url=base_url)
         return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
@@ -59,9 +56,8 @@ def build_interfaces(env, names: list[str], k: int, ablations: bool):
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--env", default="retail", choices=list(ENVS))
-    p.add_argument("--agent", default="scripted",
-                   choices=["scripted", "anthropic", "openai"])
-    p.add_argument("--model", default="claude-opus-4-8")
+    p.add_argument("--agent", default="scripted", choices=["scripted", "openai"])
+    p.add_argument("--model", default="gpt-4o-mini")
     p.add_argument("--base-url", default=None)
     p.add_argument("--interfaces", default="flat,retrieval,hyper")
     p.add_argument("--ablations", action="store_true", help="also run HyperMCP ablations")
@@ -81,7 +77,7 @@ def main() -> None:
 
     env = ENVS[args.env]
     if args.no_policy:
-        env.policy = ""                                  # structural validity only
+        env = dataclasses.replace(env, policy="")        # structural validity only
     env = pad_distractors(env, args.distractors)
     if args.tasks:
         keep = set(args.tasks.split(","))

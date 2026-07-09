@@ -79,7 +79,8 @@ class Affordance:
         return len(self.eligible(s)) > 0
 
     def tool_spec(self, s: State | None = None) -> dict:
-        """Anthropic/OpenAI-style tool definition. When `s` is given (HyperMCP), the
+        """Tool definition handed to the LLM ({name, description, input_schema};
+        OpenAIAgent converts to its function-call shape). When `s` is given (HyperMCP), the
         parameter domains are narrowed to the currently-eligible bindings (enum) and the
         description is annotated -- so the model cannot even name an invalid target."""
         desc = self.description

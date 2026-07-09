@@ -10,6 +10,7 @@ the situation of tools that belong to other services' application states -- so f
 advertises them all, retrieval may surface them, and a SEM never exposes them.
 """
 from __future__ import annotations
+import dataclasses
 from .core import Affordance, Env
 
 _STR = {"type": "string"}
@@ -106,5 +107,5 @@ def pad(env: Env, n: int) -> Env:
     """Return env extended with n realistic cross-service distractor tools."""
     if n <= 0:
         return env
-    return Env(env.name, list(env.affordances) + distractor_pool(n), env.tasks,
-               env.policy, persona=env.persona)
+    return dataclasses.replace(
+        env, affordances=list(env.affordances) + distractor_pool(n))

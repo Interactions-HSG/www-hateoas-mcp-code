@@ -3,11 +3,13 @@
 All three sit over the SAME set of affordances (env.affordances). They differ only in
 what `list_tools` advertises and whether invalid calls are reachable:
 
-  FlatInterface      (B0)  static full menu; guard enforced only by post-hoc rejection.
-  RetrievalInterface (B1)  top-k by BM25 over tool text vs. the running context;
-                           relevance, not validity -> can surface invalid tools.
-  HyperInterface     (HyperMCP) state-scoped affordances + next-step envelope;
-                           invalid calls are unreachable by construction.
+  FlatInterface               (B0)  static full menu; guard enforced only by post-hoc
+                                    rejection.
+  RetrievalInterface          (B1)  top-k by BM25 over tool text vs. the running context;
+                                    relevance, not validity -> can surface invalid tools.
+  EmbeddingRetrievalInterface (B1') same, but ranked by dense-embedding similarity.
+  HyperInterface        (HyperMCP)  state-scoped affordances + next-step envelope;
+                                    invalid calls are unreachable by construction.
 """
 from __future__ import annotations
 import math
@@ -72,6 +74,10 @@ class _Base:
         self._by = env.by_name()
         self.agent_ctx: AgentContext | None = None      # set per-task by the runner (SEM)
 
+    def list_tools(self, state: State, context: str) -> list[Affordance]:
+        """The affordances advertised to the client this step (the interface's essence)."""
+        raise NotImplementedError
+
     def offers(self, state: State, name: str, args: dict, context: str = "") -> bool:
         """Is this concrete affordance *instance* (name+args) advertised to the client?"""
         return True
@@ -79,6 +85,10 @@ class _Base:
     def tool_specs(self, state: State, context: str) -> list[dict]:
         """Tool definitions handed to the LLM this step (baselines: state-independent)."""
         return [a.tool_spec(None) for a in self.list_tools(state, context)]
+
+    def call(self, state: State, name: str, args: dict) -> Observation:
+        """Baseline call: guard-checked, no envelope (HyperInterface overrides)."""
+        return self._call_checked(state, name, args, next_affs=[])
 
     def _call_checked(self, state: State, name: str, args: dict,
                       next_affs: list[str]) -> Observation:
@@ -98,42 +108,50 @@ class FlatInterface(_Base):
     def list_tools(self, state: State, context: str) -> list[Affordance]:
         return list(self.env.affordances)
 
-    def call(self, state: State, name: str, args: dict) -> Observation:
-        return self._call_checked(state, name, args, next_affs=[])
 
-
-class RetrievalInterface(_Base):
-    """B1: relevance-based top-k retrieval (MCP-Zero / ScaleMCP style)."""
-    label = "retrieval"
+class _RetrievalBase(_Base):
+    """Shared shape of the retrieval baselines: advertise the top-k tools by textual
+    relevance to the running context. Subclasses supply the ranker (`_rank`); by design
+    neither has any notion of state or validity -- that is the gap HyperMCP closes."""
 
     def __init__(self, env: Env, k: int = 3):
         super().__init__(env)
         self.k = k
-        self.bm25 = BM25({a.name: f"{a.name} {a.description}" for a in env.affordances})
+
+    def _rank(self, query: str) -> list[str]:
+        """Top-k affordance names for this query."""
+        raise NotImplementedError
 
     def list_tools(self, state: State, context: str) -> list[Affordance]:
-        top = set(self.bm25.rank(context, self.k))
+        top = set(self._rank(context))
         return [a for a in self.env.affordances if a.name in top]
 
     def offers(self, state: State, name: str, args: dict, context: str = "") -> bool:
-        return name in set(self.bm25.rank(context, self.k))   # relevance, arg-independent
-
-    def call(self, state: State, name: str, args: dict) -> Observation:
-        return self._call_checked(state, name, args, next_affs=[])
+        return name in self._rank(context)                # relevance, arg-independent
 
 
-class EmbeddingRetrievalInterface(_Base):
+class RetrievalInterface(_RetrievalBase):
+    """B1: relevance-based top-k retrieval (MCP-Zero / ScaleMCP style)."""
+    label = "retrieval"
+
+    def __init__(self, env: Env, k: int = 3):
+        super().__init__(env, k)
+        self.bm25 = BM25({a.name: f"{a.name} {a.description}" for a in env.affordances})
+
+    def _rank(self, query: str) -> list[str]:
+        return self.bm25.rank(query, self.k)
+
+
+class EmbeddingRetrievalInterface(_RetrievalBase):
     """B1': relevance-based top-k retrieval over dense embeddings (stronger than BM25).
 
     Uses OpenAI text-embedding-3-small; tool vectors are computed once per interface,
-    the query (task + last observation) is embedded per step. Like BM25 retrieval, this
-    optimises textual relevance and has no notion of state or validity.
+    the query (task + last observation) is embedded per step.
     """
     label = "retrieval-emb"
 
     def __init__(self, env: Env, k: int = 3, model: str = "text-embedding-3-small"):
-        super().__init__(env)
-        self.k = k
+        super().__init__(env, k)
         self.model = model
         self._client = None
         self._tool_vecs: dict[str, list[float]] | None = None
@@ -165,16 +183,6 @@ class EmbeddingRetrievalInterface(_Base):
 
         return sorted(self._tool_vecs, key=lambda n: cos(self._tool_vecs[n]),
                       reverse=True)[:self.k]
-
-    def list_tools(self, state: State, context: str) -> list[Affordance]:
-        top = set(self._rank(context))
-        return [a for a in self.env.affordances if a.name in top]
-
-    def offers(self, state: State, name: str, args: dict, context: str = "") -> bool:
-        return name in set(self._rank(context))
-
-    def call(self, state: State, name: str, args: dict) -> Observation:
-        return self._call_checked(state, name, args, next_affs=[])
 
 
 class HyperInterface(_Base):

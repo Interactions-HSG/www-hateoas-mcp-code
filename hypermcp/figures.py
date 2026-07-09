@@ -17,14 +17,14 @@ marks, hairline solid grid, text in ink tokens (never series colors), direct lab
 legend, marker shapes as secondary (CVD/print) encoding on the scatter.
 """
 from __future__ import annotations
-import glob
-import json
 import pathlib
 import sys
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+from .report import load as load_result_rows
 
 # Reference palette (dataviz skill, categorical slots 1-4, light mode) + ink tokens.
 SLOT = {"flat": "#2a78d6", "retrieval": "#1baf7a",
@@ -51,11 +51,8 @@ plt.rcParams.update({
 
 
 def load(results_dir: str) -> list[dict]:
-    rows = []
-    for fp in glob.glob(f"{results_dir}/*.jsonl"):
-        with open(fp) as f:
-            rows.extend(json.loads(l) for l in f if l.strip())
-    return [r for r in rows if r.get("env") == "shop"]
+    """Shop-env rows from the logged runs (loader shared with report.py)."""
+    return [r for r in load_result_rows([results_dir]) if r.get("env") == "shop"]
 
 
 def _cell(rows, cond, iface, tasks=None):
