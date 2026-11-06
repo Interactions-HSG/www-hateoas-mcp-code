@@ -65,14 +65,14 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
             assert sorted(obs.next_affordances) == want_next, \
                 f"I5 violated: envelope is not the successor affordance set after {name}"
             for sig in obs.signifiers:
-                aff = env.by_name()[sig["signifies"]["tool"]]
+                aff = env.by_name()[sig["hmas:signifies"]["hmas:tool"]]
                 if sig.get("currently-applicable") is False:   # pending signifier
                     assert not aff.available(s) and aff.unlock_hint, \
                         f"I5 violated: bogus pending signifier for {aff.name}"
                     assert aff.name not in obs.next_affordances, \
                         f"I5 violated: {aff.name} both pending and advertised"
                 else:
-                    for b in sig["context-conditions"]["eligible-bindings"]:
+                    for b in sig["hmas:recommendsContext"]["sh:property"]["eligible-bindings"]:
                         assert aff.guard(s, b), \
                             f"I5 violated: ineligible binding in signifier"
                 checks += 1
