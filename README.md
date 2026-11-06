@@ -25,6 +25,32 @@ Three interfaces over the **same** affordances are compared:
 | `retrieval` (B1) | top-k by BM25 relevance | admitted; may drop prerequisites |
 | `hyper` (HyperMCP) | state-valid affordances + enum-narrowed args + envelope | unreachable for a conformant client |
 
+### Two realizations: session-stateful and stateless MCP
+
+MCP revision **2026-07-28** removed the `initialize` handshake and protocol sessions
+(SEP-2575, SEP-2567): `tools/list` MUST NOT vary per connection or as a side effect of
+other requests, and cross-call state lives under explicit, server-minted handles. The
+session-scoped realization is therefore only available on revisions up to 2025-11-25.
+Both are implemented and expose the same `A(s,c)` (checked by `tests.test_stateless`):
+
+| interface | MCP revision | where `A(s,c)` travels | state |
+|---|---|---|---|
+| `hyper` | ≤ 2025-11-25 | `tools/list`, re-read on `notifications/tools/list_changed` | per session |
+| `hyper-stateless` | 2026-07-28 | result **envelope** (narrowed tool definitions, handle bound); `tools/list` is a cacheable, state-independent catalog (`ttlMs`/`cacheScope`) | under a handle minted at authentication |
+| `hyper-stateless-noenv` | 2026-07-28 | nowhere: the host presents the whole catalog, premature calls are rejected (= SEP-2567 guidance) | under a handle |
+
+Under `hyper-stateless`, the host presents to the model only the tools of the latest
+envelope (before the first result: the catalog's entry tools, which take no handle).
+
+`--transport mcp` runs these three as real MCP servers (official Python SDK, Streamable
+HTTP on localhost, one server per episode): `hyper` negotiates 2025-11-25 with
+`Mcp-Session-Id` and emits a request-scoped `tools/list_changed`; the stateless variants
+speak 2026-07-28 and carry the envelope in `CallToolResult._meta["io.hypermcp/envelope"]`.
+The host asserts the agent context in each request's `_meta["io.hypermcp/agentContext"]`
+(a stand-in for authorization claims). `tests.test_mcp_transport` checks that the
+scripted agent gets identical results over the wire and in process. Retrieval baselines
+select tools host-side and are not wrapped.
+
 ## Mapping to the signifier theory (Vachtsevanou et al.)
 
 The harness is a deliberate specialisation of the signifier / SEM theory to LLM agents and
@@ -33,23 +59,29 @@ the MCP substrate. The correspondence, and where each concept lives:
 | Signifier theory | This codebase | Paper |
 |---|---|---|
 | Affordance (potential interaction) | `core.Affordance` — MCP tool + guard `g_a(s,β)` + effect `δ_a` + purposes | §3.1, Eq. 1 |
-| Artifact / environment state | `core.State` (one per MCP session) | §3.1 |
+| Artifact / environment state | `core.State` (per MCP session, or per state handle on 2026-07-28: `stateless.StatelessServer`) | §3.2 |
 | Agent profile (abilities, goals) | `core.AgentContext` | §3.2 |
 | **Signifier** (reveals an affordance) | `signifiers.affordance_to_signifier` — HMAS-Interaction-ontology rendering, attached to results as `Observation.signifiers` | §3.3, Listing 1 |
-| **Signifier Exposure Mechanism** | `interfaces.HyperInterface.list_tools` = `A(s,c)`; enum narrowing in `core.Affordance.tool_spec` | §3.2, Eq. 3 |
+| **Signifier Exposure Mechanism** | `interfaces.HyperInterface.list_tools` = `A(s,c)` (session realization); `stateless.StatelessServer.exposed` + envelope (stateless realization); enum narrowing in `core.Affordance.tool_spec` | §3.3–3.4, Eq. 3 |
 | Recommended context (SHACL shapes) | guard functions + eligible bindings (`context-conditions` in the JSON-LD view) | Listing 1 |
 | **Pending signifiers / `recommendsContext`** | `Affordance.unlock_hint` → envelope's "[not yet available: …]" + `currently-applicable: false` signifiers — relevant-but-not-applicable affordances stay *visible* without being *callable* | Discussion |
 | Yggdrasil / HMAS platform | `bridges/yggdrasil.py` (scaffold; live path is a paper deliverable) | §4 |
 
 The theory was built for symbolic (BDI) agents; the extension here is to treat the LLM
-tool-calling loop as a new class of signifier consumer, with `tools/list` as the exposure
-channel and `notifications/tools/list_changed` as the perception update.
+tool-calling loop as a new class of signifier consumer. On session-stateful MCP the
+exposure channel is `tools/list` and the perception update `notifications/tools/
+list_changed`; on stateless MCP (2026-07-28) both are the result envelope.
 
 ## Open questions for co-authors
 
-1. **Ontology terms (blocking Listing 1 + `signifiers.py`).** The HMAS Interaction
-   ontology IRIs and the context-shape idiom used here are placeholders — confirm against
-   the published vocabularies and the Yggdrasil implementation before freezing.
+1. **Ontology terms (Listing 1 + `signifiers.py`).** The signifier shape now follows
+   Lemée's LNCS 2026 paper (*Integrating Agentic Web Standards in Multi-Agent Systems
+   Using Hypermedia*): `rdfs:label`; `hmas:signifies` → `td:InteractionAffordance` with
+   `td:hasForm`/`td:hasInputSchema`; `hmas:recommendsContext` → a context node with an
+   `rdfs:comment`. HyperMCP's addition is the machine-readable SHACL guard
+   (`sh:property` / eligible bindings) inside that context node — the validity/state input
+   the relevance-only selection does not model. Still confirm the final IRIs against the
+   published HMAS Interaction ontology and the Yggdrasil implementation before freezing.
 2. **Live Yggdrasil bridge.** `bridges/yggdrasil.py` is a scaffold; the demo plan is
    staged: **(0)** fixture round-trip — parse real signifier payloads into `Affordance`s
    (rdflib behind an extra) and drive the scripted agent, no server needed; **(1)** live
@@ -57,8 +89,10 @@ channel and `notifications/tools/list_changed` as the perception update.
    re-GET: over the bridge, validity is decided server-side, so perceive = re-fetch and
    local guards disappear); **(2)** an LLM run over the live bridge with the `wot`
    tasks — one results row answering "does this work outside your simulated envs?";
-   **(3, optional)** wrap the bridge as an actual MCP server (`tools/list_changed`) so
-   any off-the-shelf MCP host can drive the smart space live.
+   **(3, optional)** serve the bridge as an actual MCP server via `mcp_transport.py`, so
+   any off-the-shelf MCP host can drive the smart space live. On current MCP
+   (2026-07-28) this must use the envelope realization (`hyper-stateless`):
+   `tools/list_changed` can no longer re-scope the tool list.
 
    **Needed from Danai** (stage 0 is unblocked by the first bullet alone):
    - example signifier RDF payloads *as served by Yggdrasil*, for parser fixtures, plus
@@ -120,8 +154,17 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python
 # Aggregate all logged runs into a per-(model, condition, interface) table:
 .venv/bin/python -m hypermcp.report
 
-# Invariants (17k+ instance-checks; no key needed):
-.venv/bin/python -m tests.test_invariants
+# Both realizations, in process and over a real MCP transport:
+.venv/bin/python -m hypermcp.run --env shop --max-steps 12 \
+    --interfaces hyper,hyper-stateless,hyper-stateless-noenv
+.venv/bin/python -m hypermcp.run --env shop --max-steps 12 \
+    --interfaces hyper,hyper-stateless --ablations --transport mcp
+scripts/run-stateless-campaign.sh          # the LLM runs behind the stateless results
+
+# Invariants (no key needed):
+.venv/bin/python -m tests.test_invariants      # I1-I5, 21k instance-checks
+.venv/bin/python -m tests.test_stateless       # S1-S4, stateless realization
+.venv/bin/python -m tests.test_mcp_transport   # T1-T2, both realizations over MCP HTTP
 ```
 
 Metrics per run: task success, illegal-tool-call rate, structurally-blocked count,
@@ -171,9 +214,39 @@ Headlines:
   negligible on short horizons — but **pending signifiers** (recommendsContext) took the
   purchase task from 0/4 to 4/4.
 
+### Stateless realization (MCP 2026-07-28), shop, 2026-11-06
+
+`gpt-4o-mini`, shop, policy in context, `--max-steps 12`; in process 4 × 10 tasks, over
+MCP Streamable HTTP 2 × 10 tasks (`scripts/run-stateless-campaign.sh`). `hyper` was
+rerun the same day as the reference:
+
+| Interface | Transport | n | Success | Illegal | Menu | Tokens |
+|---|---|---|---|---|---|---|
+| hyper (session, ≤ 2025-11-25) | in process | 40 | 100% | 4 | 4.82 | 3146 |
+| hyper (session, 2025-11-25) | MCP HTTP | 20 | 100% | 2 | 4.82 | 3129 |
+| **hyper-stateless** (2026-07-28) | in process | 40 | 98% | 5 | 4.82 | 4270 |
+| **hyper-stateless** (2026-07-28) | MCP HTTP | 20 | 100% | 2 | 4.81 | 4181 |
+| hyper-stateless-noenv (= SEP-2567) | in process | 40 | 100% | 10 | 24.00 | 8104 |
+
+- The same-day `hyper` rerun reproduces the July cell (100% / 4 / 4.8 / 3013).
+- **Both realizations expose the same tools** (menu 4.82, ~3.3 calls per episode) and
+  match over the wire; all illegal calls under either are model-fabricated bindings
+  rejected by the guard (`return_order`, one `cancel_order`).
+- **The stateless realization costs ~36% more tokens** than the session one. The cause is
+  the handle pattern: every advertised tool carries a `handle` parameter (≈1,180 schema
+  characters, ≈300 tokens per turn on the shop), which accounts for the +1,080 prompt
+  tokens per episode.
+- **Without the envelope** (catalog only, as SEP-2567 prescribes), the model sees all 24
+  tools plus handles every turn: 2× the illegal calls (10, including 4 calls without a
+  handle) and 1.9× the tokens of the envelope variant; 67% more than the July flat
+  baseline (which also batched calls in parallel).
+- Single campaign, n = 20–40 per cell: the illegal-call differences are small counts.
+
 The result logs backing this table (and the paper's Table 1) are committed under
 `results/` with per-call transcripts; regenerate the table with
-`.venv/bin/python -m hypermcp.report`.
+`.venv/bin/python -m hypermcp.report` (rows are split by campaign date, so reruns are
+never pooled with the cells behind the paper; `hypermcp.figures` uses the 2026-07-08
+campaign only).
 
 ## Layout
 
@@ -188,7 +261,11 @@ hypermcp/
                       multi-constraint tasks (ordering, window/tier/ownership traps)
   distractors.py      realistic cross-service tool pool (many-servers regime)
   interfaces.py       FlatInterface / Retrieval (BM25) / EmbeddingRetrieval /
-                      HyperInterface (the SEM)
+                      HyperInterface (the SEM, session realization)
+  stateless.py        stateless realization (MCP 2026-07-28): handle store, catalog,
+                      envelope (StatelessServer), envelope-following host, harness iface
+  mcp_transport.py    both realizations as real MCP servers (SDK, Streamable HTTP) +
+                      MCPInterface host used by the agents over the wire
   signifiers.py       HMAS Interaction ontology envelope (JSON-LD-shaped)
   bridges/yggdrasil.py  HyperMCP<->Yggdrasil bridge (scaffold; live path TODO)
   agents.py           run_scripted + OpenAIAgent (LLM tool-calling loop)
@@ -196,6 +273,9 @@ hypermcp/
   report.py           aggregate results/*.jsonl into a comparison table
   run.py              CLI
 tests/test_invariants.py  randomised checks of the no-invalid-call guarantee (I1-I5)
+tests/test_stateless.py   stateless realization: catalog, envelope parity, handles (S1-S4)
+tests/test_mcp_transport.py  both realizations over MCP HTTP == in process (T1-T2)
+scripts/                  LLM campaign scripts
 prototype/            standalone stdlib PoC of the core mechanism
 results/              committed JSONL logs of the runs behind the paper table
 ```

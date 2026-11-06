@@ -10,6 +10,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from .core import Env, Task, State, Observation
 from .metrics import RunResult
 
@@ -49,21 +50,45 @@ def _result_text(obs: Observation) -> str:
 # --------------------------------------------------------------------------- #
 # Scripted agent (no key) -- pipeline smoke test.
 # --------------------------------------------------------------------------- #
+_HANDLE_RE = re.compile(r"\[state handle: (\S+)")
+
+
+def _bind_handle(interface, state: State, name: str, args: dict, context: str,
+                 known: str | None) -> dict:
+    """Stateless realization: supply the state handle. A conformant client fills a
+    parameter the advertisement has bound to a single value (enum of length one); without
+    an envelope, it threads the handle it last received, as a model would."""
+    if "handle" in args:
+        return args
+    spec = next((s for s in interface.tool_specs(state, context) if s["name"] == name),
+                None)
+    prop = (spec or {}).get("input_schema", {}).get("properties", {}).get("handle")
+    if prop is None:
+        return args
+    enum = prop.get("enum")
+    if enum and len(enum) == 1:
+        return {**args, "handle": enum[0]}
+    return {**args, "handle": known} if known else args
+
+
 def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResult:
     state, res = _start(interface, task, "scripted")
     intents = list(task.scripted_intent)
+    handle = None                     # stateless realization: last handle received
 
     for _ in range(max_steps):
         visible = [a.name for a in interface.list_tools(state, task.instruction)]
         res.menu_sizes.append(len(visible))
 
         # 1) authenticate first if needed and possible
-        if state.authenticated_user is None:
+        if interface.current_state(state).authenticated_user is None:
             auth = next((a for a in interface.list_tools(state, task.instruction)
                          if a.rel == "authenticate"), None)
             if auth is not None:
-                _execute(interface, state, res, auth.name,
-                         state.scratch.get("creds", {}))
+                obs = _execute(interface, state, res, auth.name,
+                               state.scratch.get("creds", {}))
+                m = _HANDLE_RE.search(obs.text)
+                handle = m.group(1) if m else handle
                 continue
             # auth prerequisite not advertised (e.g. B1 retrieved only action tools)
             res.blocked += 1
@@ -73,6 +98,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
         if not intents:
             break
         name, args = intents[0]
+        args = _bind_handle(interface, state, name, args, task.instruction, handle)
         # A conformant client selects only among ADVERTISED tools (what the LLM sees),
         # and only instances the interface offers. `name not in visible` also catches
         # env bugs where a solvable action is never advertised.
@@ -83,7 +109,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
         _execute(interface, state, res, name, args)
         intents.pop(0)
 
-    res.success = task.goal(state)
+    res.success = task.goal(interface.current_state(state))
     return res
 
 
@@ -149,5 +175,5 @@ class OpenAIAgent:
                 messages.append({"role": "tool", "tool_call_id": tc.id,
                                  "content": _result_text(obs)})
 
-        res.success = task.goal(state)
+        res.success = task.goal(interface.current_state(state))
         return res

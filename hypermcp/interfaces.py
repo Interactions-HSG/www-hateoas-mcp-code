@@ -86,6 +86,12 @@ class _Base:
         """Tool definitions handed to the LLM this step (baselines: state-independent)."""
         return [a.tool_spec(None) for a in self.list_tools(state, context)]
 
+    def current_state(self, state: State) -> State:
+        """The interaction state the task goal is evaluated on (evaluator view). In-process
+        interfaces mutate the episode state directly; the stateless realization keeps it
+        server-side under a handle, and the MCP transport in another server object."""
+        return state
+
     def call(self, state: State, name: str, args: dict) -> Observation:
         """Baseline call: guard-checked, no envelope (HyperInterface overrides)."""
         return self._call_checked(state, name, args, next_affs=[])

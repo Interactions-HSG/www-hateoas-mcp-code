@@ -53,9 +53,15 @@ plt.rcParams.update({
 })
 
 
+# The figures show the campaign behind the paper's tables; later reruns of the same
+# interfaces (e.g. the 2026-11-06 stateless campaign's session reference) are not pooled.
+PAPER_CAMPAIGN = "20260708"
+
+
 def load(results_dir: str) -> list[dict]:
-    """Shop-env rows from the logged runs (loader shared with report.py)."""
-    return [r for r in load_result_rows([results_dir]) if r.get("env") == "shop"]
+    """Shop-env rows of the paper campaign (loader shared with report.py)."""
+    return [r for r in load_result_rows([results_dir])
+            if r.get("env") == "shop" and r.get("_campaign") == PAPER_CAMPAIGN]
 
 
 def _cell(rows, cond, iface, tasks=None):

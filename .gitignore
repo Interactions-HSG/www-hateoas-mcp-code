@@ -5,3 +5,5 @@ __pycache__/
 # curated result logs ARE tracked (small JSONL, they back the paper tables);
 # archived/superseded runs are not:
 results/archive-*/
+campaign.log
+campaign.status

@@ -5,10 +5,13 @@ Examples:
   python -m hypermcp.run --ablations                 # + hyper-noctx/-noenum/-noenv
   python -m hypermcp.run --env wot --ablations
   python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
+  python -m hypermcp.run --interfaces hyper,hyper-stateless --ablations   # both realizations
+  python -m hypermcp.run --interfaces hyper,hyper-stateless --transport mcp  # over MCP HTTP
 """
 from __future__ import annotations
 import argparse
 import dataclasses
+import functools
 import datetime as dt
 import json
 import pathlib
@@ -21,11 +24,19 @@ except Exception:
 
 from .envs import retail, wot, shop
 from .interfaces import INTERFACES, ABLATIONS, HyperInterface
+from .stateless import StatelessHyperInterface
 from .distractors import pad as pad_distractors
 from .metrics import aggregate
 from .agents import run_scripted, OpenAIAgent
 
 ENVS = {"retail": retail.ENV, "wot": wot.ENV, "shop": shop.ENV}
+
+# Stateless realization (MCP 2026-07-28). Its ablation drops the envelope, which leaves
+# the catalog-only server that SEP-2567 prescribes for state-dependent tools.
+STATELESS_ABLATIONS = {"hyper-stateless-noenv": {"use_envelope": False}}
+ALL_INTERFACES = {**INTERFACES, "hyper-stateless": StatelessHyperInterface,
+                  **{label: functools.partial(StatelessHyperInterface, **kw)
+                     for label, kw in STATELESS_ABLATIONS.items()}}
 
 
 def build_agent(kind: str, model: str, base_url: str | None, max_steps: int):
@@ -38,17 +49,34 @@ def build_agent(kind: str, model: str, base_url: str | None, max_steps: int):
     raise SystemExit(f"unknown agent: {kind}")
 
 
-def build_interfaces(env, names: list[str], k: int, ablations: bool):
+def build_interfaces(env, names: list[str], k: int, ablations: bool,
+                     transport: str = "inproc"):
     """Return an ordered list of (label, interface_instance)."""
+    if transport == "mcp":
+        from .mcp_transport import MCPInterface, VARIANTS
+        labels = list(names)
+        if ablations and "hyper-stateless" in names and \
+                "hyper-stateless-noenv" not in names:
+            labels += list(STATELESS_ABLATIONS)
+        bad = [n for n in labels if n not in VARIANTS]
+        if bad:
+            raise SystemExit(f"--transport mcp supports {', '.join(VARIANTS)}; got {bad}")
+        return [(n, MCPInterface(env, n)) for n in labels]
     out = []
     for name in names:
-        cls = INTERFACES[name]
+        cls = ALL_INTERFACES[name]
         iface = cls(env, k=k) if name.startswith("retrieval") else cls(env)
+        iface.label = name
         out.append((name, iface))
         if ablations and name == "hyper":
             for vlabel, kwargs in ABLATIONS.items():
                 v = HyperInterface(env, **kwargs)
                 v.label = vlabel                       # distinguish in reports/logs
+                out.append((vlabel, v))
+        if ablations and name == "hyper-stateless":
+            for vlabel, kwargs in STATELESS_ABLATIONS.items():
+                v = StatelessHyperInterface(env, **kwargs)
+                v.label = vlabel
                 out.append((vlabel, v))
     return out
 
@@ -73,6 +101,9 @@ def main() -> None:
     p.add_argument("--tasks", default=None,
                    help="comma-separated task ids to run (default: all)")
     p.add_argument("--out", default=None, help="directory to write per-run JSONL logs")
+    p.add_argument("--transport", default="inproc", choices=["inproc", "mcp"],
+                   help="mcp: serve each HyperMCP realization as a real MCP server over "
+                        "Streamable HTTP (2025-11-25 sessions / 2026-07-28 stateless)")
     args = p.parse_args()
 
     env = ENVS[args.env]
@@ -83,14 +114,15 @@ def main() -> None:
         keep = set(args.tasks.split(","))
         env = dataclasses.replace(env, tasks=[t for t in env.tasks if t.id in keep])
     agent = build_agent(args.agent, args.model, args.base_url, args.max_steps)
-    interfaces = build_interfaces(env, args.interfaces.split(","), args.k, args.ablations)
+    interfaces = build_interfaces(env, args.interfaces.split(","), args.k, args.ablations,
+                                  args.transport)
     results = []
 
     print(f"env={args.env}  agent={args.agent}  "
           f"model={args.model if args.agent != 'scripted' else '-'}\n")
-    print(f"{'interface':<13}{'task':<22}{'ok':<4}{'illegal':<9}{'blocked':<9}"
+    print(f"{'interface':<26}{'task':<22}{'ok':<4}{'illegal':<9}{'blocked':<9}"
           f"{'steps':<7}{'menu':<7}{'tokens':<8}")
-    print("-" * 79)
+    print("-" * 92)
     condition = "nopolicy" if args.no_policy else "policy"
     if args.distractors:
         condition += f"+d{args.distractors}"
@@ -99,16 +131,18 @@ def main() -> None:
             r = agent(iface, env, task)
             r.condition = condition
             results.append(r)
-            print(f"{r.interface:<13}{r.task_id:<22}{'Y' if r.success else 'N':<4}"
+            print(f"{r.interface:<26}{r.task_id:<22}{'Y' if r.success else 'N':<4}"
                   f"{r.illegal_calls:<9}{r.blocked:<9}{r.steps:<7}"
                   f"{r.avg_menu:<7.2f}{r.total_tokens:<8}")
+        if hasattr(iface, "close"):
+            iface.close()                              # MCP transport: stop server/client
 
     print("\n=== Aggregate by interface ===")
-    print(f"{'interface':<13}{'success':<9}{'illegal':<9}{'blocked':<9}"
+    print(f"{'interface':<26}{'success':<9}{'illegal':<9}{'blocked':<9}"
           f"{'avg_menu':<10}{'avg_tokens':<11}")
-    print("-" * 61)
+    print("-" * 74)
     for iface, s in aggregate(results).items():
-        print(f"{iface:<13}{s['success_rate']*100:<9.0f}{s['illegal_calls']:<9}"
+        print(f"{iface:<26}{s['success_rate']*100:<9.0f}{s['illegal_calls']:<9}"
               f"{s['blocked']:<9}{s['avg_menu']:<10.2f}{s['avg_tokens']:<11.0f}")
 
     if args.out:
