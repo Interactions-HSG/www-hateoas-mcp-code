@@ -14,7 +14,9 @@ import copy
 
 @dataclass
 class State:
-    """Per-session application state (the 'engine of application state')."""
+    """Server-side interaction state: session state (session-stateful MCP) or resource
+    state under a handle (stateless MCP). Not REST's application state, which the client
+    holds; this is the state whose controls drive it."""
     authenticated_user: str | None = None
     db: dict[str, Any] = field(default_factory=dict)   # users, orders, ...
     scratch: dict[str, Any] = field(default_factory=dict)
