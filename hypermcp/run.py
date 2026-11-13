@@ -1,12 +1,12 @@
-"""Run the B0/B1/HyperMCP comparison (and SEM ablations) over an environment's tasks.
+"""Run the Flat/Retrieval/HyperMCP comparison (and ablations) on the shop environment.
 
 Examples:
   python -m hypermcp.run                              # scripted, flat/retrieval/hyper
-  python -m hypermcp.run --ablations                 # + hyper-noctx/-noenum/-noenv
-  python -m hypermcp.run --env wot --ablations
-  python -m hypermcp.run --agent openai --model gpt-4o-mini --ablations --out results
+  python -m hypermcp.run --ablations                 # + hyper-noctx/-nopending
+  python -m hypermcp.run --agent openai --ablations --out results
   python -m hypermcp.run --interfaces hyper,hyper-stateless --ablations   # both realizations
   python -m hypermcp.run --interfaces hyper,hyper-stateless --transport mcp  # over MCP HTTP
+  python -m hypermcp.run --agent openai --interfaces flat,hyper --distractors 100
 """
 from __future__ import annotations
 import argparse
@@ -22,14 +22,12 @@ try:
 except Exception:
     pass
 
-from .envs import retail, wot, shop
+from .envs import shop
 from .interfaces import INTERFACES, ABLATIONS, HyperInterface
 from .stateless import StatelessHyperInterface
 from .distractors import pad as pad_distractors
 from .metrics import aggregate
 from .agents import run_scripted, OpenAIAgent
-
-ENVS = {"retail": retail.ENV, "wot": wot.ENV, "shop": shop.ENV}
 
 # Stateless realization (MCP 2026-07-28). Its ablation drops the envelope, which leaves
 # the catalog-only server that SEP-2567 prescribes for state-dependent tools.
@@ -39,12 +37,12 @@ ALL_INTERFACES = {**INTERFACES, "hyper-stateless": StatelessHyperInterface,
                      for label, kw in STATELESS_ABLATIONS.items()}}
 
 
-def build_agent(kind: str, model: str, base_url: str | None, max_steps: int):
+def build_agent(kind: str, model: str, max_steps: int):
     if kind == "scripted":
         return lambda iface, env, task: run_scripted(iface, env, task,
                                                      max_steps=max_steps)
     if kind == "openai":
-        a = OpenAIAgent(model=model, base_url=base_url)
+        a = OpenAIAgent(model=model)
         return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
     raise SystemExit(f"unknown agent: {kind}")
 
@@ -83,21 +81,16 @@ def build_interfaces(env, names: list[str], k: int, ablations: bool,
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--env", default="retail", choices=list(ENVS))
     p.add_argument("--agent", default="scripted", choices=["scripted", "openai"])
     p.add_argument("--model", default="gpt-4o-mini")
-    p.add_argument("--base-url", default=None)
     p.add_argument("--interfaces", default="flat,retrieval,hyper")
     p.add_argument("--ablations", action="store_true", help="also run HyperMCP ablations")
     p.add_argument("--k", type=int, default=3, help="top-k for the retrieval baseline")
-    p.add_argument("--no-policy", action="store_true",
-                   help="omit the natural-language policy from the prompt (tests whether "
-                        "the SEM enforces validity structurally, without prompt rules)")
     p.add_argument("--distractors", type=int, default=0,
                    help="pad the env with N realistic other-service tools "
                         "(many-servers regime)")
-    p.add_argument("--max-steps", type=int, default=8,
-                   help="max perceive-act cycles per task (shop tasks need ~12)")
+    p.add_argument("--max-steps", type=int, default=12,
+                   help="max perceive-act cycles per task")
     p.add_argument("--tasks", default=None,
                    help="comma-separated task ids to run (default: all)")
     p.add_argument("--out", default=None, help="directory to write per-run JSONL logs")
@@ -106,24 +99,21 @@ def main() -> None:
                         "Streamable HTTP (2025-11-25 sessions / 2026-07-28 stateless)")
     args = p.parse_args()
 
-    env = ENVS[args.env]
-    if args.no_policy:
-        env = dataclasses.replace(env, policy="")        # structural validity only
-    env = pad_distractors(env, args.distractors)
+    env = pad_distractors(shop.ENV, args.distractors)
     if args.tasks:
         keep = set(args.tasks.split(","))
         env = dataclasses.replace(env, tasks=[t for t in env.tasks if t.id in keep])
-    agent = build_agent(args.agent, args.model, args.base_url, args.max_steps)
+    agent = build_agent(args.agent, args.model, args.max_steps)
     interfaces = build_interfaces(env, args.interfaces.split(","), args.k, args.ablations,
                                   args.transport)
     results = []
 
-    print(f"env={args.env}  agent={args.agent}  "
+    print(f"env=shop  agent={args.agent}  "
           f"model={args.model if args.agent != 'scripted' else '-'}\n")
     print(f"{'interface':<26}{'task':<22}{'ok':<4}{'illegal':<9}{'blocked':<9}"
           f"{'steps':<7}{'menu':<7}{'tokens':<8}")
     print("-" * 92)
-    condition = "nopolicy" if args.no_policy else "policy"
+    condition = "policy"                               # label kept for log continuity
     if args.distractors:
         condition += f"+d{args.distractors}"
     for label, iface in interfaces:
@@ -149,11 +139,11 @@ def main() -> None:
         outdir = pathlib.Path(args.out)
         outdir.mkdir(parents=True, exist_ok=True)
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = outdir / f"{args.env}-{args.agent}-{stamp}.jsonl"
+        path = outdir / f"shop-{args.agent}-{stamp}.jsonl"
         with path.open("w") as f:
             for r in results:
                 d = dataclasses.asdict(r)
-                d["env"] = args.env
+                d["env"] = "shop"
                 d["avg_menu"] = r.avg_menu
                 d["total_tokens"] = r.total_tokens
                 f.write(json.dumps(d) + "\n")

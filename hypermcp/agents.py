@@ -3,9 +3,8 @@
 - run_scripted: deterministic, no API key. Authenticates if required, then attempts the
   task's intended action iff the interface makes it visible. Exercises the full pipeline
   and reproduces the mechanism-level difference (illegal calls, menu size, blocking).
-- OpenAIAgent: a real LLM tool-calling loop (gated on an API key; also serves open
-  models via an OpenAI-compatible endpoint), where the model re-reads the advertised
-  tools each step. This is where the paper's headline numbers come from.
+- OpenAIAgent: a real LLM tool-calling loop (gated on an API key), where the model
+  re-reads the advertised tools each step. This is where the paper's numbers come from.
 """
 from __future__ import annotations
 import json
@@ -119,8 +118,7 @@ def run_scripted(interface, env: Env, task: Task, max_steps: int = 8) -> RunResu
 def _system_prompt(env: Env) -> str:
     base = (f"{env.persona} Fulfil the user's request by calling the "
             "available tools. Only call a tool when its use is appropriate.")
-    # HyperMCP's claim: the SEM makes the textual policy unnecessary (validity is
-    # structural). When env.policy is empty (--no-policy), the agent gets no rules text.
+    # The policy is given to every interface, as in the paper.
     return f"{base}\n\nPOLICY:\n{env.policy}" if env.policy else base
 
 
@@ -129,13 +127,12 @@ def _context(task: Task, last_obs: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# OpenAI-compatible tool-calling loop (for open models via an OpenAI-style endpoint)
+# OpenAI tool-calling loop
 # --------------------------------------------------------------------------- #
 class OpenAIAgent:
-    def __init__(self, model: str, base_url: str | None = None, max_tokens: int = 1024):
+    def __init__(self, model: str, max_tokens: int = 1024):
         from openai import OpenAI
-        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "x"),
-                             base_url=base_url or os.environ.get("OPENAI_BASE_URL"))
+        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "x"))
         self.model = model
         self.max_tokens = max_tokens
 

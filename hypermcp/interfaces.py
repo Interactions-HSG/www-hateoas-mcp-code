@@ -199,10 +199,9 @@ class HyperInterface(_Base):
     Concrete affordance instances are advertised (parameter domains narrowed to eligible
     bindings), and results carry a next-step signifier envelope.
 
-    Ablation switches isolate each design element:
-      use_context  -- also condition exposure on agent context (the 2nd SEM input)
-      use_enum     -- narrow parameter domains to eligible bindings in the tool schema
-      use_envelope -- return the next-step affordances with each result
+    Ablation switches (the two reported in the paper):
+      use_context -- also condition exposure on agent context (the 2nd SEM input)
+      use_pending -- also return pending signifiers (relevant, not yet applicable)
     """
     label = "hyper"
     # Conformance criterion (iv): the client selects only *advertised* instances. A batch
@@ -212,12 +211,10 @@ class HyperInterface(_Base):
     # hypermedia client therefore follows one affordance per perceive-act cycle.
     serial_calls = True
 
-    def __init__(self, env: Env, use_context: bool = True, use_enum: bool = True,
-                 use_envelope: bool = True):
+    def __init__(self, env: Env, use_context: bool = True, use_pending: bool = True):
         super().__init__(env)
         self.use_context = use_context
-        self.use_enum = use_enum
-        self.use_envelope = use_envelope
+        self.use_pending = use_pending
 
     def _ctx(self):
         return self.agent_ctx if self.use_context else None
@@ -233,8 +230,7 @@ class HyperInterface(_Base):
         return aff.guard(state, args) and aff.relevant(self._ctx())
 
     def tool_specs(self, state: State, context: str) -> list[dict]:
-        return [a.tool_spec(state if self.use_enum else None)
-                for a in self.list_tools(state, context)]
+        return [a.tool_spec(state) for a in self.list_tools(state, context)]
 
     def call(self, state: State, name: str, args: dict) -> Observation:
         aff = self._by[name]
@@ -253,15 +249,13 @@ class HyperInterface(_Base):
                            signifiers=self._signifiers(state))
 
     def _envelope(self, state: State) -> list[str]:
-        if not self.use_envelope:
-            return []
         return [a.name for a in self.list_tools(state, "")]
 
     def _pending(self, state: State) -> list[str]:
         """Pending signifiers: goal-relevant affordances that are not applicable yet,
         with their unmet context (hmas:recommendsContext). Advertised as information,
         not as callable tools -- criterion (ii) is untouched."""
-        if not self.use_envelope:
+        if not self.use_pending:
             return []
         return [f"{a.name} ({a.unlock_hint})" for a in self.env.affordances
                 if a.unlock_hint and a.relevant(self._ctx())
@@ -270,9 +264,8 @@ class HyperInterface(_Base):
     def _signifiers(self, state: State) -> list[dict]:
         """HMAS-Interaction-ontology view of the envelope (see signifiers.py): the same
         exposed affordances, rendered as signifiers for Hypermedia MAS interop."""
-        if not self.use_envelope:
-            return []
-        return envelope(self.env.affordances, state, self._ctx())
+        return envelope(self.env.affordances, state, self._ctx(),
+                        pending=self.use_pending)
 
 
 INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface,
@@ -281,6 +274,5 @@ INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface,
 # Named ablation variants of HyperMCP (kwargs applied at construction).
 ABLATIONS = {
     "hyper-noctx": {"use_context": False},               # environment-state-only SEM
-    "hyper-noenum": {"use_enum": False},                 # no parameter-domain narrowing
-    "hyper-noenv": {"use_envelope": False},              # no next-step signifier envelope
+    "hyper-nopending": {"use_pending": False},           # applicability alone, no pending
 }

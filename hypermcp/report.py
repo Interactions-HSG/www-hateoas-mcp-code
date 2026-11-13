@@ -5,13 +5,16 @@ interface is reported next to, not pooled with, the runs behind earlier tables. 
 vs_flat column compares against the flat baseline of the same model/env/condition.
 
 Run: python -m hypermcp.report [results_dir_or_file ...]   (default: results/)
+     python -m hypermcp.report --tasks cancel_and_return,return_window_trap,buy_hoodie
+       (the 3-task subset run at every distractor count; gives the scaling numbers'
+        like-for-like baseline at 24 tools)
 """
 from __future__ import annotations
+import argparse
 import glob
 import json
 import os
 import re
-import sys
 
 _STAMP = re.compile(r"-(\d{8})-\d{6}\.jsonl$")
 
@@ -53,8 +56,16 @@ def summarise(rows: list[dict]) -> dict[tuple[str, str, str, str, str], dict]:
 
 
 def main() -> None:
-    paths = sys.argv[1:] or ["results"]
+    p = argparse.ArgumentParser()
+    p.add_argument("paths", nargs="*", default=["results"])
+    p.add_argument("--tasks", default=None,
+                   help="comma-separated task ids to restrict the summary to")
+    args = p.parse_args()
+    paths = args.paths
     rows = load(paths)
+    if args.tasks:
+        keep = set(args.tasks.split(","))
+        rows = [r for r in rows if r["task_id"] in keep]
     if not rows:
         print("no result rows found in", paths)
         return

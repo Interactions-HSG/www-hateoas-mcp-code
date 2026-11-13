@@ -16,7 +16,7 @@ Run: python -m tests.test_stateless
 from __future__ import annotations
 import random
 from hypermcp.core import AgentContext, clone
-from hypermcp.envs import retail, wot, shop
+from hypermcp.envs import shop
 from hypermcp.interfaces import HyperInterface
 from hypermcp.stateless import (StatelessServer, EnvelopeHost, HANDLE, HANDLE_PREFIX,
                                 requires_handle)
@@ -106,16 +106,13 @@ def check_env(env, ctx, trials=20, steps=10, seed=0) -> int:
 
 def main() -> None:
     total = 0
-    for env, ctx, trials in [(retail.ENV, AgentContext(goal="cancel"), 30),
-                             (retail.ENV, None, 30),
-                             (wot.ENV, AgentContext(goal="run"), 30),
-                             (wot.ENV, None, 30),
-                             (shop.ENV, AgentContext(goal={"cancel", "return"}), 6),
-                             (shop.ENV, None, 6)]:
+    for env, ctx, trials in [(shop.ENV, AgentContext(goal={"cancel", "return"}), 20),
+                             (shop.ENV, AgentContext(goal="buy"), 20),
+                             (shop.ENV, None, 20)]:
         c = check_env(env, ctx, trials=trials)
         total += c
         print(f"  {env.name:<7} ctx={str(ctx):<28} checks={c}")
-    print(f"OK  {total} checks across retail+wot+shop; S1-S4 hold "
+    print(f"OK  {total} checks on shop; S1-S4 hold "
           "(stateless realization exposes the same A(s, c) as the session one).")
 
 

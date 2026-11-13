@@ -79,16 +79,13 @@ class CallResult:
 class StatelessServer:
     """Server side of the stateless realization: catalog, handle store, envelope."""
 
-    def __init__(self, env: Env, entry_state: State, use_envelope: bool = True,
-                 use_enum: bool = True, use_context: bool = True):
+    def __init__(self, env: Env, entry_state: State, use_envelope: bool = True):
         self.env = env
         self._by = env.by_name()
         self.entry = clone(entry_state)                  # never mutated
         self.store: dict[str, State] = {}
         self.last_handle: str | None = None              # for the evaluator only
         self.use_envelope = use_envelope
-        self.use_enum = use_enum
-        self.use_context = use_context
         # Entry affordances are applicable without any interaction state; they take an
         # optional handle. Every other affordance requires one. This depends only on the
         # server's entry state, not on any client, so the catalog stays cacheable.
@@ -104,13 +101,10 @@ class StatelessServer:
                 if abilities is None or a.name in abilities]
 
     # -- tools/call ------------------------------------------------------------------ #
-    def _ctx(self, ctx: AgentContext | None) -> AgentContext | None:
-        return ctx if self.use_context else None
-
     def exposed(self, state: State, ctx: AgentContext | None) -> list[Affordance]:
         """A(s, c): applicable and context-relevant affordances."""
-        c = self._ctx(ctx)
-        return [a for a in self.env.affordances if a.available(state) and a.relevant(c)]
+        return [a for a in self.env.affordances
+                if a.available(state) and a.relevant(ctx)]
 
     def _envelope(self, state: State, handle: str | None,
                   ctx: AgentContext | None) -> tuple[list[dict] | None, list[str], list[dict]]:
@@ -118,12 +112,11 @@ class StatelessServer:
             return None, [], []
         tools = []
         for a in self.exposed(state, ctx):
-            spec = a.tool_spec(state if self.use_enum else None)
+            spec = a.tool_spec(state)
             tools.append(_with_handle(spec, [handle], required=True) if handle else spec)
-        c = self._ctx(ctx)
         pending = [f"{a.name} ({a.unlock_hint})" for a in self.env.affordances
-                   if a.unlock_hint and a.relevant(c) and not a.available(state)]
-        return tools, pending, signifier_envelope(self.env.affordances, state, c)
+                   if a.unlock_hint and a.relevant(ctx) and not a.available(state)]
+        return tools, pending, signifier_envelope(self.env.affordances, state, ctx)
 
     def _error(self, text: str, state: State | None, handle: str | None,
                ctx: AgentContext | None) -> CallResult:
@@ -199,12 +192,9 @@ class StatelessHyperInterface(_Base):
     label = "hyper-stateless"
     serial_calls = True                                  # conformance criterion (iv)
 
-    def __init__(self, env: Env, use_envelope: bool = True, use_enum: bool = True,
-                 use_context: bool = True):
+    def __init__(self, env: Env, use_envelope: bool = True):
         super().__init__(env)
         self.use_envelope = use_envelope
-        self.use_enum = use_enum
-        self.use_context = use_context
         self._episode: State | None = None
         self.server: StatelessServer | None = None
         self.host: EnvelopeHost | None = None
@@ -212,8 +202,7 @@ class StatelessHyperInterface(_Base):
     def _ensure(self, state: State) -> None:
         if self._episode is not state:                   # new episode: fresh server/host
             self._episode = state
-            self.server = StatelessServer(self.env, state, self.use_envelope,
-                                          self.use_enum, self.use_context)
+            self.server = StatelessServer(self.env, state, self.use_envelope)
             abilities = self.agent_ctx.abilities if self.agent_ctx else None
             self.host = EnvelopeHost(self.server.catalog(abilities), self.use_envelope)
 

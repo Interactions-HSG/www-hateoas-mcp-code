@@ -5,13 +5,13 @@ Run: python -m tests.test_mcp_transport
   T1 (protocol):  the session realization negotiates 2025-11-25 and receives
                   notifications/tools/list_changed; the stateless realization speaks
                   2026-07-28 and its tools/list result carries ttlMs and cacheScope.
-  T2 (parity):    for every environment and realization, the scripted agent obtains the
+  T2 (parity):    for every realization, the scripted agent obtains the
                   same success, illegal-call, blocked, and menu-size results over the
                   wire as in process -- the harness numbers do not depend on the
                   in-process shortcut.
 """
 from __future__ import annotations
-from hypermcp.envs import retail, wot, shop
+from hypermcp.envs import shop
 from hypermcp.interfaces import HyperInterface
 from hypermcp.stateless import StatelessHyperInterface
 from hypermcp.mcp_transport import (MCPInterface, SESSION_PROTOCOL, STATELESS_PROTOCOL,
@@ -31,7 +31,7 @@ def _summary(rs):
 
 
 def check_protocol() -> None:
-    env = retail.ENV
+    env = shop.ENV
     task = env.tasks[0]
     for variant, version in (("hyper", SESSION_PROTOCOL),
                              ("hyper-stateless", STATELESS_PROTOCOL)):
@@ -58,7 +58,7 @@ def check_protocol() -> None:
 
 
 def check_parity() -> None:
-    for env in (retail.ENV, wot.ENV, shop.ENV):
+    for env in (shop.ENV,):
         for variant, ref in REFERENCE.items():
             wire = MCPInterface(env, variant)
             try:

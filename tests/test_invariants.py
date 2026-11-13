@@ -11,13 +11,15 @@ Run: python -m tests.test_invariants
                     -> baselines *can* admit invalid calls (the gap we close).
   I5 (envelope):    the envelope returned with a result advertises exactly the
                     affordances valid in the SUCCESSOR state (post-transition), and
-                    every signifier in it carries only guard-satisfying bindings.
+                    every signifier's SHACL guard admits exactly the eligible values.
+  I6 (pending):     the hyper-nopending ablation advertises the same tools and envelope
+                    but returns no pending signifiers.
 """
 from __future__ import annotations
 import copy
 import random
 from hypermcp.core import AgentContext
-from hypermcp.envs import retail, wot, shop
+from hypermcp.envs import shop
 from hypermcp.interfaces import HyperInterface, FlatInterface
 
 
@@ -33,6 +35,8 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
     saw_flat_illegal_offer = False
     hyper = HyperInterface(env)
     hyper.agent_ctx = ctx
+    nopending = HyperInterface(env, use_pending=False)
+    nopending.agent_ctx = ctx
     flat = FlatInterface(env)
     for t in range(trials):
         s = env.tasks[t % len(env.tasks)].init()
@@ -59,7 +63,13 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
             if not offered:
                 break
             name, args = random.choice(offered)
+            s_np = copy.deepcopy(s)
             obs = hyper.call(s, name, args)                                  # advance state
+            obs_np = nopending.call(s_np, name, args)                        # I6
+            assert obs_np.next_affordances == obs.next_affordances and \
+                not obs_np.pending and \
+                not any(x.get("currently-applicable") is False for x in obs_np.signifiers), \
+                "I6 violated: nopending differs beyond the pending signifiers"
             want_next = sorted(a.name for a in env.affordances
                                if a.available(s) and a.relevant(ctx))        # I5
             assert sorted(obs.next_affordances) == want_next, \
@@ -72,9 +82,12 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
                     assert aff.name not in obs.next_affordances, \
                         f"I5 violated: {aff.name} both pending and advertised"
                 else:
-                    for b in sig["hmas:recommendsContext"]["sh:property"]["eligible-bindings"]:
-                        assert aff.guard(s, b), \
-                            f"I5 violated: ineligible binding in signifier"
+                    elig = aff.eligible(s)
+                    for shape in sig["hmas:recommendsContext"]["sh:property"]:
+                        want = sorted({b[shape["sh:path"]] for b in elig
+                                       if shape["sh:path"] in b})
+                        assert shape["sh:in"] == want, \
+                            f"I5 violated: SHACL guard of {aff.name} != eligible values"
                 checks += 1
     return checks, saw_flat_illegal_offer
 
@@ -82,19 +95,16 @@ def check_env(env, ctx, trials=40, steps=12, seed=0) -> tuple[int, bool]:
 def main() -> None:
     total = 0
     flat_gap_seen = False
-    for env, ctx, trials in [(retail.ENV, AgentContext(goal="cancel"), 40),
-                             (retail.ENV, None, 40),
-                             (wot.ENV, AgentContext(goal="run"), 40),
-                             (wot.ENV, None, 40),
-                             (shop.ENV, AgentContext(goal={"cancel", "return"}), 6),
-                             (shop.ENV, None, 6)]:
+    for env, ctx, trials in [(shop.ENV, AgentContext(goal={"cancel", "return"}), 20),
+                             (shop.ENV, AgentContext(goal="buy"), 20),
+                             (shop.ENV, None, 20)]:
         c, gap = check_env(env, ctx, trials=trials)
         total += c
         flat_gap_seen = flat_gap_seen or gap
         print(f"  {env.name:<7} ctx={str(ctx):<28} checks={c}")
     assert flat_gap_seen, "I4 expected: flat should advertise a guard-false instance"
-    print(f"OK  {total} instance-checks across retail+wot+shop; "
-          f"I1/I2/I3/I5 hold, I4 confirmed (flat advertises invalid instances).")
+    print(f"OK  {total} instance-checks on shop; "
+          f"I1/I2/I3/I5/I6 hold, I4 confirmed (flat advertises invalid instances).")
 
 
 if __name__ == "__main__":
