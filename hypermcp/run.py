@@ -77,6 +77,8 @@ def build_interfaces(env, names: list[str], k: int, ablations: bool,
                 out.append((vlabel, v))
         if ablations and name == "hyper-stateless":
             for vlabel, kwargs in STATELESS_ABLATIONS.items():
+                if vlabel in names:                    # already requested explicitly
+                    continue
                 v = StatelessHyperInterface(env, **kwargs)
                 v.label = vlabel
                 out.append((vlabel, v))

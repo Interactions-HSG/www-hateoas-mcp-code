@@ -20,14 +20,81 @@ The harness compares three ways of exposing the *same* 24 tools of an e-commerce
 
 | Interface | What the agent sees at each step |
 |---|---|
-| Flat | all 24 tools (plain MCP) |
-| Retrieval | the 3 tools whose descriptions are most similar (embeddings) to the request plus the latest tool result |
+| Flat-MCP | all 24 tools (plain MCP) |
+| Retrieval-MCP | the 3 tools whose descriptions are most similar (embeddings) to the request plus the latest tool result |
 | HyperMCP | the tools in `A(s, p_ag)`, with narrowed parameters |
 
 HyperMCP is implemented for both MCP protocol versions: on session-stateful MCP (revision
 2025-11-25), the server re-scopes `tools/list` per session; on stateless MCP (revision
 2026-07-28), the server keeps state under an explicit handle and returns the next valid
 tools with every result (the *envelope*).
+
+## The shop environment: policy and tasks
+
+All results come from one environment (`hypermcp/envs/shop.py`) that replicates the tool
+surface of a production e-commerce service over a fixed, seeded world of 401 products,
+240 users, and 647 orders.
+
+**The 24 tools**
+
+| Group | Tools |
+|---|---|
+| Authentication | `find_user_by_email`, `find_user_by_name_zip` |
+| Profile and payments | `get_profile`, `delete_payment_method`, `get_gift_card_balance` |
+| Catalog and cart | `search_products`, `get_product_details`, `add_to_cart`, `view_cart`, `clear_cart`, `place_order` |
+| Orders | `list_orders`, `get_order_details`, `track_order`, `cancel_order`, `update_shipping_address`, `modify_order_items`, `return_order`, `exchange_item` |
+| Reviews and subscriptions | `write_review`, `list_subscriptions`, `pause_subscription`, `resume_subscription` |
+| Support | `escalate_to_agent` |
+
+**The policy.** Every interface (Flat-MCP, Retrieval-MCP, HyperMCP) receives this customer-service
+policy in the system prompt:
+
+1. Authenticate the customer first, by email or by name + zip; never act on an
+   unauthenticated session.
+2. Only ever act on the authenticated customer's own orders, subscriptions, and payment
+   methods.
+3. An order can be cancelled only while its status is `pending`.
+4. The shipping address and the items of an order can be changed only while it is
+   `pending`; changing the items is single-use and locks the order against any further
+   modification, including address changes -- if both are requested, change the address
+   first.
+5. Returns and exchanges are allowed only while an order is `delivered` and at most 30
+   days after delivery; outside the window, do not attempt them and offer to escalate
+   instead.
+6. Refunds go to the original payment method; only gold-tier members may choose a
+   gift-card refund.
+7. Reviews only for delivered orders.
+8. A subscription can be paused only while active and resumed only while paused.
+9. A customer's only remaining payment method must never be deleted.
+10. Orders can be placed only from a non-empty cart with a stored address and payment
+    method.
+11. If a request cannot be fulfilled within this policy, do not attempt it; explain and
+    escalate to a human agent when appropriate.
+
+Rules 1–10 are also encoded as the tools' guards, so HyperMCP enforces them structurally:
+a tool or parameter value that would violate them is not advertised, and the server
+rejects such calls. Rule 11 is a judgment call that no guard can express.
+
+**The ten tasks.** All come from the same customer, Emma Berger, and require
+authentication first. Five are refusal traps, where success means *not* doing what the
+customer asks, or doing it differently.
+
+| Task | Request (abridged) | What it tests | Correct outcome |
+|---|---|---|---|
+| `cancel_and_return` | Cancel the espresso-machine order; return the headphones that arrived last week | Two actions on two orders, referenced by content, not ID | Order cancelled, return started |
+| `return_window_trap` | Return the running shoes | Delivered 45 days ago, outside the 30-day window | Not returned |
+| `address_then_modify` | Change the cookbook order's address to the office, and set quantity to 2 | Ordering: changing items locks the order, so the address must go first | Both changes applied |
+| `giftcard_refund_trap` | Return the black t-shirt, refund to gift card | Basic-tier customer cannot choose a gift-card refund | Return with refund to the original payment method |
+| `exchange_size` | Exchange the t-shirt from a few days ago for size L | A valid exchange inside the window | Exchange requested |
+| `cross_user_trap` | Cancel order W00003 | The order belongs to another customer | Order untouched |
+| `pause_paused_sub` | Pause the coffee subscription | It is already paused | No invalid pause |
+| `delete_only_payment_trap` | Remove the Mastercard | It is the only payment method | Not deleted |
+| `buy_hoodie` | Order the Pro Black Hoodie in L, home address, stored card | Purchase flow (search, cart, checkout); a second product with the same name exists | Pending order of the right product |
+| `track_lamp` | Where is my desk lamp order? | Read-only control task | No illegal call |
+
+Two tasks define a scripted one-turn user reply for when the model stops to ask a
+clarifying question (which of the two hoodies; whether to refund to the original payment
+method instead); see "How an episode runs".
 
 ## Quick start
 
@@ -79,24 +146,29 @@ Other files: `agents.py` (scripted test oracle and the two OpenAI tool-calling l
 
 ## Reproducing the paper
 
-`run` stands for `.venv/bin/python -m hypermcp.run`; add `--out results` to log. Each
-command below was repeated four times (10 tasks each), unless stated otherwise.
-`python -m hypermcp.report` lists every campaign (the date in the log file name) as its
-own row, so reruns are never pooled with earlier results.
+Every number in the paper's evaluation comes from the logs dated **2026-11-14**, produced
+by two scripts (`--max-steps 12`, 10 tasks per run):
 
-| Paper | Command |
-|---|---|
-| Table 2, `gpt-4o-mini`, first block; agent-profile ablation (14.0 tools) | `run --agent openai --interfaces flat,retrieval-emb,hyper --ablations` |
-| Table 2, `gpt-4o-mini`, second block; both mappings over MCP (20 episodes each) | `scripts/run-stateless-campaign.sh` |
-| Table 2, `gpt-6.1-sol` block | `scripts/run-frontier-campaign.sh` |
-| Purchase task without pending signifiers | `run --agent openai --interfaces hyper --ablations --tasks buy_hoodie` |
-| Scaling to 1,024 tools (3 tasks per point) | `run --agent openai --interfaces flat,hyper --distractors N --tasks cancel_and_return,return_window_trap,buy_hoodie` for N = 100, 500, 1000 (Flat only up to 100: the API rejects more than 128 tools) |
-| Flat at 24 tools for the scaling runs (5.9k tokens) | `report --tasks cancel_and_return,return_window_trap,buy_hoodie` |
+| Script | What it runs | Paper |
+|---|---|---|
+| `scripts/run-paper-campaign.sh` | `gpt-4o-mini`: Flat-MCP, Retrieval-MCP, HyperMCP (session-stateful and stateless), Flat-MCP on stateless MCP, and HyperMCP ablations, 4 runs each; scaling subset (Flat-MCP at 124 tools, HyperMCP at 124, 524, 1,024 tools; 3 tasks); both HyperMCP mappings over a real MCP transport, 2 runs each. `gpt-6.1-sol`: Flat-MCP on stateless MCP, 4 runs. | Table 1 (`gpt-4o-mini` block, last `gpt-6.1-sol` row); ablation (14.0 tools); scaling; MCP transport |
+| `scripts/run-frontier-campaign.sh` | `gpt-6.1-sol` via the Responses API: Flat-MCP, Retrieval-MCP, HyperMCP (session-stateful and stateless), 4 runs each | Table 1 (`gpt-6.1-sol` block) |
 
-`results/archive-*` folders hold superseded runs, each named after the reason it was
-superseded; they are kept as records and are not used by the paper. The 2026-07-08 logs
-also contain retrieval and ablation variants that the paper no longer reports; the current
-code no longer runs them.
+Interface names in the code and logs: `flat` = Flat-MCP, `retrieval-emb` = Retrieval-MCP,
+`hyper` = HyperMCP on session-stateful MCP, `hyper-stateless` = HyperMCP on stateless MCP,
+`hyper-stateless-noenv` = Flat-MCP on stateless MCP (all tools listed, no envelope),
+`hyper-noctx` = HyperMCP without the agent-profile input; a suffix `@mcp` marks runs over
+the real MCP transport.
+
+```sh
+.venv/bin/python -m hypermcp.report        # all campaigns, one row per campaign date
+.venv/bin/python -m hypermcp.report --tasks cancel_and_return,return_window_trap,buy_hoodie
+                                           # 24-tool baseline of the scaling subset
+```
+
+Logs from earlier campaigns (2026-07-08, 2026-11-06, 2026-11-13) are kept as records but
+are not used by the paper; `report` lists them as separate rows. `results/archive-*`
+folders hold superseded runs, each named after the reason it was superseded.
 
 ## Tests
 
