@@ -3,61 +3,18 @@
 All three sit over the SAME set of affordances (env.affordances). They differ only in
 what `list_tools` advertises and whether invalid calls are reachable:
 
-  FlatInterface               (B0)  static full menu; guard enforced only by post-hoc
+  FlatInterface         (baseline)  static full menu; guard enforced only by post-hoc
                                     rejection.
-  RetrievalInterface          (B1)  top-k by BM25 over tool text vs. the running context;
+  EmbeddingRetrievalInterface (baseline) top-k by dense-embedding similarity of tool text to the
+                                    running context (user request + latest tool result);
                                     relevance, not validity -> can surface invalid tools.
-  EmbeddingRetrievalInterface (B1') same, but ranked by dense-embedding similarity.
   HyperInterface        (HyperMCP)  state-scoped affordances + next-step envelope;
                                     invalid calls are unreachable by construction.
 """
 from __future__ import annotations
 import math
-import re
 from .core import State, Env, Observation, Affordance, AgentContext
 from .signifiers import envelope
-
-
-# --------------------------------------------------------------------------- #
-# Tiny BM25 (pure python, no numpy) for the B1 retrieval baseline.
-# --------------------------------------------------------------------------- #
-def _tok(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
-
-
-class BM25:
-    def __init__(self, docs: dict[str, str], k1: float = 1.5, b: float = 0.75):
-        self.k1, self.b = k1, b
-        self.ids = list(docs)
-        self.toks = {i: _tok(t) for i, t in docs.items()}
-        self.dl = {i: len(t) for i, t in self.toks.items()}
-        self.avgdl = (sum(self.dl.values()) / len(self.dl)) if self.dl else 0.0
-        self.df: dict[str, int] = {}
-        for t in self.toks.values():
-            for w in set(t):
-                self.df[w] = self.df.get(w, 0) + 1
-        self.N = len(self.ids)
-
-    def _idf(self, w: str) -> float:
-        n = self.df.get(w, 0)
-        return math.log(1 + (self.N - n + 0.5) / (n + 0.5))
-
-    def rank(self, query: str, k: int) -> list[str]:
-        q = _tok(query)
-        scores = {}
-        for i in self.ids:
-            tf: dict[str, int] = {}
-            for w in self.toks[i]:
-                tf[w] = tf.get(w, 0) + 1
-            s = 0.0
-            for w in q:
-                if w not in tf:
-                    continue
-                idf = self._idf(w)
-                denom = tf[w] + self.k1 * (1 - self.b + self.b * self.dl[i] / (self.avgdl or 1))
-                s += idf * (tf[w] * (self.k1 + 1)) / denom
-            scores[i] = s
-        return sorted(self.ids, key=lambda i: scores[i], reverse=True)[:k]
 
 
 # --------------------------------------------------------------------------- #
@@ -88,7 +45,7 @@ class _Base:
 
     def current_state(self, state: State) -> State:
         """The interaction state the task goal is evaluated on (evaluator view). In-process
-        interfaces mutate the episode state directly; the stateless realization keeps it
+        interfaces mutate the episode state directly; the stateless mapping keeps it
         server-side under a handle, and the MCP transport in another server object."""
         return state
 
@@ -108,7 +65,7 @@ class _Base:
 
 
 class FlatInterface(_Base):
-    """B0: vanilla MCP -- every tool, always."""
+    """Flat baseline: plain MCP -- every tool, always."""
     label = "flat"
 
     def list_tools(self, state: State, context: str) -> list[Affordance]:
@@ -136,20 +93,8 @@ class _RetrievalBase(_Base):
         return name in self._rank(context)                # relevance, arg-independent
 
 
-class RetrievalInterface(_RetrievalBase):
-    """B1: relevance-based top-k retrieval (MCP-Zero / ScaleMCP style)."""
-    label = "retrieval"
-
-    def __init__(self, env: Env, k: int = 3):
-        super().__init__(env, k)
-        self.bm25 = BM25({a.name: f"{a.name} {a.description}" for a in env.affordances})
-
-    def _rank(self, query: str) -> list[str]:
-        return self.bm25.rank(query, self.k)
-
-
 class EmbeddingRetrievalInterface(_RetrievalBase):
-    """B1': relevance-based top-k retrieval over dense embeddings (stronger than BM25).
+    """Retrieval baseline: relevance-based top-k retrieval over dense embeddings (MCP-Zero / ScaleMCP style).
 
     Uses OpenAI text-embedding-3-small; tool vectors are computed once per interface,
     the query (task + last observation) is embedded per step.
@@ -268,8 +213,8 @@ class HyperInterface(_Base):
                         pending=self.use_pending)
 
 
-INTERFACES = {"flat": FlatInterface, "retrieval": RetrievalInterface,
-              "retrieval-emb": EmbeddingRetrievalInterface, "hyper": HyperInterface}
+INTERFACES = {"flat": FlatInterface, "retrieval-emb": EmbeddingRetrievalInterface,
+              "hyper": HyperInterface}
 
 # Named ablation variants of HyperMCP (kwargs applied at construction).
 ABLATIONS = {

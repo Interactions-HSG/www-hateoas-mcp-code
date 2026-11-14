@@ -1,4 +1,4 @@
-"""Invariants of the stateless realization (MCP 2026-07-28), over random walks of state.
+"""Invariants of the stateless mapping (MCP 2026-07-28), over random walks of state.
 
 Run: python -m tests.test_stateless
 
@@ -6,8 +6,8 @@ Run: python -m tests.test_stateless
                  catalog before and after every transition. Entry affordances take an
                  optional handle; every other affordance requires one.
   S2 (parity):   the envelope returned with each result equals what the session
-                 realization (HyperInterface) advertises in the successor state, with the
-                 state handle bound -- the two realizations expose the same A(s', c).
+                 mapping (HyperInterface) advertises in the successor state, with the
+                 state handle bound -- the two mappings expose the same A(s', p_ag).
   S3 (handles):  calls that need state but carry no handle, or carry an unknown one, are
                  rejected without any state change; handles are opaque, 128-bit, distinct.
   S4 (host):     the EnvelopeHost presents exactly the envelope's tools after a result,
@@ -113,7 +113,7 @@ def main() -> None:
         total += c
         print(f"  {env.name:<7} ctx={str(ctx):<28} checks={c}")
     print(f"OK  {total} checks on shop; S1-S4 hold "
-          "(stateless realization exposes the same A(s, c) as the session one).")
+          "(stateless mapping exposes the same A(s, p_ag) as the session one).")
 
 
 if __name__ == "__main__":

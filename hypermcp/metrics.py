@@ -16,6 +16,7 @@ class RunResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     menu_sizes: list[int] = field(default_factory=list)
+    user_replies: int = 0           # scripted user replies given (Task.user_reply)
     # Per-call transcript: {"tool", "args", "ok"} -- lets us diagnose *which* call was
     # illegal (e.g. a fabricated out-of-advertisement binding) instead of just counting.
     calls: list[dict] = field(default_factory=list)

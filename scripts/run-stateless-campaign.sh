@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LLM campaign for the stateless realization (MCP 2026-07-28), shop environment.
+# LLM campaign for the stateless mapping (MCP 2026-07-28), shop environment.
 #   in process : hyper (session realization, same-day reference), hyper-stateless,
 #                hyper-stateless-noenv (= SEP-2567 catalog-only server); 4 x 10 tasks
 #   over MCP   : hyper@mcp (2025-11-25 sessions), hyper-stateless@mcp (2026-07-28);
@@ -9,7 +9,7 @@ set -u
 cd "$(dirname "$0")/.."
 MARK=${MARK:-campaign.status}
 rm -f "$MARK"
-run() { .venv/bin/python -m hypermcp.run --env shop --agent openai --model gpt-4o-mini \
+run() { .venv/bin/python -m hypermcp.run --agent openai --model gpt-4o-mini \
           --max-steps 12 --out results "$@"; }
 status=0
 for i in 1 2 3 4; do

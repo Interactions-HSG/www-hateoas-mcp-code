@@ -1,11 +1,11 @@
-"""End-to-end check of both realizations over a real MCP transport (Streamable HTTP).
+"""End-to-end check of both mappings over a real MCP transport (Streamable HTTP).
 
 Run: python -m tests.test_mcp_transport
 
-  T1 (protocol):  the session realization negotiates 2025-11-25 and receives
-                  notifications/tools/list_changed; the stateless realization speaks
+  T1 (protocol):  the session mapping negotiates 2025-11-25 and receives
+                  notifications/tools/list_changed; the stateless mapping speaks
                   2026-07-28 and its tools/list result carries ttlMs and cacheScope.
-  T2 (parity):    for every realization, the scripted agent obtains the
+  T2 (parity):    for every mapping, the scripted agent obtains the
                   same success, illegal-call, blocked, and menu-size results over the
                   wire as in process -- the harness numbers do not depend on the
                   in-process shortcut.
@@ -76,7 +76,7 @@ def check_parity() -> None:
 def main() -> None:
     check_protocol()
     check_parity()
-    print("OK  both realizations run over MCP Streamable HTTP and match the in-process "
+    print("OK  both mappings run over MCP Streamable HTTP and match the in-process "
           "harness.")
 
 

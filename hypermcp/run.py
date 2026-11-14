@@ -1,12 +1,13 @@
 """Run the Flat/Retrieval/HyperMCP comparison (and ablations) on the shop environment.
 
 Examples:
-  python -m hypermcp.run                              # scripted, flat/retrieval/hyper
+  python -m hypermcp.run                              # scripted, flat/retrieval-emb/hyper
   python -m hypermcp.run --ablations                 # + hyper-noctx/-nopending
   python -m hypermcp.run --agent openai --ablations --out results
-  python -m hypermcp.run --interfaces hyper,hyper-stateless --ablations   # both realizations
+  python -m hypermcp.run --interfaces hyper,hyper-stateless --ablations   # both mappings
   python -m hypermcp.run --interfaces hyper,hyper-stateless --transport mcp  # over MCP HTTP
   python -m hypermcp.run --agent openai --interfaces flat,hyper --distractors 100
+  python -m hypermcp.run --agent openai-responses --model gpt-6.1-sol --out results
 """
 from __future__ import annotations
 import argparse
@@ -27,9 +28,9 @@ from .interfaces import INTERFACES, ABLATIONS, HyperInterface
 from .stateless import StatelessHyperInterface
 from .distractors import pad as pad_distractors
 from .metrics import aggregate
-from .agents import run_scripted, OpenAIAgent
+from .agents import run_scripted, OpenAIAgent, OpenAIResponsesAgent
 
-# Stateless realization (MCP 2026-07-28). Its ablation drops the envelope, which leaves
+# Stateless mapping (MCP 2026-07-28). Its ablation drops the envelope, which leaves
 # the catalog-only server that SEP-2567 prescribes for state-dependent tools.
 STATELESS_ABLATIONS = {"hyper-stateless-noenv": {"use_envelope": False}}
 ALL_INTERFACES = {**INTERFACES, "hyper-stateless": StatelessHyperInterface,
@@ -43,6 +44,9 @@ def build_agent(kind: str, model: str, max_steps: int):
                                                      max_steps=max_steps)
     if kind == "openai":
         a = OpenAIAgent(model=model)
+        return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
+    if kind == "openai-responses":
+        a = OpenAIResponsesAgent(model=model)
         return lambda iface, env, task: a.run(iface, env, task, max_steps=max_steps)
     raise SystemExit(f"unknown agent: {kind}")
 
@@ -81,9 +85,9 @@ def build_interfaces(env, names: list[str], k: int, ablations: bool,
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--agent", default="scripted", choices=["scripted", "openai"])
+    p.add_argument("--agent", default="scripted", choices=["scripted", "openai", "openai-responses"])
     p.add_argument("--model", default="gpt-4o-mini")
-    p.add_argument("--interfaces", default="flat,retrieval,hyper")
+    p.add_argument("--interfaces", default="flat,retrieval-emb,hyper")
     p.add_argument("--ablations", action="store_true", help="also run HyperMCP ablations")
     p.add_argument("--k", type=int, default=3, help="top-k for the retrieval baseline")
     p.add_argument("--distractors", type=int, default=0,
@@ -95,7 +99,7 @@ def main() -> None:
                    help="comma-separated task ids to run (default: all)")
     p.add_argument("--out", default=None, help="directory to write per-run JSONL logs")
     p.add_argument("--transport", default="inproc", choices=["inproc", "mcp"],
-                   help="mcp: serve each HyperMCP realization as a real MCP server over "
+                   help="mcp: serve each HyperMCP mapping as a real MCP server over "
                         "Streamable HTTP (2025-11-25 sessions / 2026-07-28 stateless)")
     args = p.parse_args()
 

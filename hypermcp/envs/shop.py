@@ -603,7 +603,8 @@ TASKS = [
          and s.db["orders"]["W90004"].get("refund_target") == "original",
          scripted_intent=[("return_order",
                            {"order_id": "W90004", "refund_target": "original"})],
-         agent_ctx=AgentContext(goal={"return", "refund"})),
+         agent_ctx=AgentContext(goal={"return", "refund"}),
+         user_reply="Yes, please refund it to my original payment method then."),
     # Exchange within window.
     Task("exchange_size",
          "I'm Emma Berger, emma.berger@mail.com. The t-shirt I got a few days ago is "
@@ -647,7 +648,9 @@ TASKS = [
                             for o in s.db["orders"].values()),
          scripted_intent=[("add_to_cart", {"product_id": "P9001", "size": "L"}),
                           ("place_order", {"address_id": "A1", "payment_id": "PM1"})],
-         agent_ctx=AgentContext(goal={"buy"})),
+         agent_ctx=AgentContext(goal={"buy"}),
+         # The seeded catalog also contains an unrelated "Pro Black Hoodie" (P0091).
+         user_reply="The CHF 89.00 one, please."),
     # Simple control task.
     Task("track_lamp",
          "Emma Berger, emma.berger@mail.com -- where is my desk lamp order?",

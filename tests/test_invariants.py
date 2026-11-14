@@ -3,7 +3,7 @@
 Run: python -m tests.test_invariants
 
   I1 (consistency): HyperMCP advertises an affordance instance iff its guard holds AND it
-                    is relevant to the agent context.
+                    is relevant to the agent profile.
   I2 (soundness):   every advertised instance is callable without an illegal-call error
                     -> HyperMCP admits no invalid calls, by construction.
   I3 (enum):        a HyperMCP tool schema's parameter enum == the eligible bindings.

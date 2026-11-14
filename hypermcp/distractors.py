@@ -6,7 +6,7 @@ irrelevant to any one session. To make the many-tools condition *representative*
 than synthetic, distractors are drawn from realistic tool templates across such domains
 (plausible names, descriptions, and parameter schemas), instantiated per service so that
 tool counts can scale to the thousands. Their guards are False in this session -- exactly
-the situation of tools that belong to other services' application states -- so flat
+the situation of tools that belong to other services' states -- so flat
 advertises them all, retrieval may surface them, and a SEM never exposes them.
 """
 from __future__ import annotations

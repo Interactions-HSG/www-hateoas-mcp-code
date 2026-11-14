@@ -1,20 +1,20 @@
 """HyperMCP over a real MCP transport (official Python SDK, Streamable HTTP).
 
-Both realizations of A(s, c) from the paper, each on the protocol revision it targets:
+Both mappings of A(s, p_ag) from the paper, each on the protocol revision it targets:
 
-  hyper            session realization, protocol 2025-11-25 (initialize handshake,
-                   Mcp-Session-Id). The server keeps one application state per session;
-                   tools/list returns A(s, c) for that session; after a call that changes
+  hyper            session mapping, protocol 2025-11-25 (initialize handshake,
+                   Mcp-Session-Id). The server keeps one interaction state per session;
+                   tools/list returns A(s, p_ag) for that session; after a call that changes
                    the advertised set, the server emits notifications/tools/list_changed
                    (request-scoped, so it precedes the result) and the host re-lists.
-  hyper-stateless  stateless realization, protocol 2026-07-28 (no handshake, no session).
+  hyper-stateless  stateless mapping, protocol 2026-07-28 (no handshake, no session).
                    tools/list returns the cacheable catalog (ttlMs/cacheScope); state
                    lives under handles; each CallToolResult carries the envelope in
                    `_meta["io.hypermcp/envelope"]`; the host presents the envelope's tools.
   hyper-stateless-noenv
                    2026-07-28 server without envelope = SEP-2567 guidance (catalog only).
 
-The host asserts the agent context c on every request in `_meta["io.hypermcp/
+The host asserts the agent profile p_ag on every request in `_meta["io.hypermcp/
 agentContext"]` (a stand-in for authorization claims), so the server needs no session
 for it. One server is started per episode on a free localhost port; the evaluator reads
 the server's state in process to score the task goal (not part of the protocol).
@@ -89,7 +89,7 @@ def _text(result: types.CallToolResult) -> str:
 # Servers
 # --------------------------------------------------------------------------- #
 class SessionHyperServer:
-    """Session realization on 2025-11-25: one HyperInterface state per MCP session."""
+    """Session mapping on 2025-11-25: one HyperInterface state per MCP session."""
 
     def __init__(self, env: Env, entry_state: State):
         self.env = env
@@ -138,7 +138,7 @@ class SessionHyperServer:
 
 
 class StatelessHyperServer:
-    """Stateless realization on 2026-07-28 around `stateless.StatelessServer`."""
+    """Stateless mapping on 2026-07-28 around `stateless.StatelessServer`."""
 
     def __init__(self, env: Env, entry_state: State, use_envelope: bool = True):
         self.core = StatelessServer(env, entry_state, use_envelope=use_envelope)
@@ -257,7 +257,7 @@ class MCPInterface:
     """Harness interface whose tools live behind a real MCP server over HTTP.
 
     One server + client per episode (the harness hands each episode a fresh entry
-    state). `variant` selects the realization (see module docstring)."""
+    state). `variant` selects the mapping (see module docstring)."""
 
     def __init__(self, env: Env, variant: str = "hyper-stateless"):
         if variant not in VARIANTS:

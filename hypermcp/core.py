@@ -1,9 +1,9 @@
-"""Core model: application state, affordances (guarded tools), environments, tasks.
+"""Core model: interaction state, affordances (guarded tools), environments, tasks.
 
 An Affordance is a tool augmented with a *guard* (precondition over application
 state) and an *effect* (state transition). The three interfaces in `interfaces.py`
 differ only in *which* affordances they advertise and whether invalid calls are
-reachable -- the affordances themselves are shared, so B0/B1/HyperMCP are compared
+reachable -- the affordances themselves are shared, so Flat, Retrieval, and HyperMCP are compared
 over an identical underlying capability set.
 """
 from __future__ import annotations
@@ -126,6 +126,9 @@ class Task:
     # Optional scripted intent for no-key smoke runs: ordered (tool, args) the agent *wants*.
     scripted_intent: list[tuple[str, dict]] = field(default_factory=list)
     agent_ctx: "AgentContext | None" = None             # agent goal/abilities for the SEM
+    # One-turn scripted user reply, given once if the model stops (e.g., to ask a
+    # clarifying question) before the task is done; the harness has no user simulator.
+    user_reply: str | None = None
 
 
 @dataclass
@@ -133,7 +136,7 @@ class Env:
     name: str
     affordances: list[Affordance]
     tasks: list[Task]
-    policy: str = ""                                     # natural-language policy (B0/B1)
+    policy: str = ""                                     # natural-language policy (given to every interface)
     # Who the agent is in this environment (system-prompt persona; interface-independent).
     persona: str = "You are an agent acting on behalf of the user."
 
