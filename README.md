@@ -3,6 +3,8 @@
 Reference implementation and evaluation harness for the short paper *Toward a
 Hypermedia-Driven Model Context Protocol: Exposing Tools through Situated Signifiers*.
 
+> **Note:** This repository was created with Claude Opus 5.5.
+
 ## The idea in brief
 
 In the Model Context Protocol (MCP), a server lists all of its tools, and an LLM agent may
