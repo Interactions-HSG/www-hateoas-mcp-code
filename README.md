@@ -162,6 +162,8 @@ Interface names in the code and logs: `flat` = Flat-MCP, `retrieval-emb` = Retri
 `hyper-noctx` = HyperMCP without the agent-profile input; a suffix `@mcp` marks runs over
 the real MCP transport.
 
+The `gpt-4o-mini` logs of 2026-11-14 contain `hyper-stateless-noenv` twice per run (a `run.py` bug, since fixed). `report` keeps the later of the two episodes, so every row reports one episode per task and run.
+
 ```sh
 .venv/bin/python -m hypermcp.report        # all campaigns, one row per campaign date
 .venv/bin/python -m hypermcp.report --tasks cancel_and_return,return_window_trap,buy_hoodie

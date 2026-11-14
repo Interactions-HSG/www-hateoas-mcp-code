@@ -26,12 +26,20 @@ def load(paths: list[str]) -> list[dict]:
     rows = []
     for fp in files:
         m = _STAMP.search(os.path.basename(fp))
+        # One log file is one run, with each task once per interface. Older logs ran
+        # hyper-stateless-noenv twice per run (a run.py bug, since fixed); the later
+        # episode supersedes the earlier one, so every row reports one episode per run.
+        latest: dict[tuple, dict] = {}
         with open(fp) as f:
             for line in f:
                 if line.strip():
                     r = json.loads(line)
                     r["_campaign"] = m.group(1) if m else "?"
-                    rows.append(r)
+                    key = (r["model"], r.get("env"), r.get("condition"),
+                           r["interface"], r["task_id"])
+                    latest.pop(key, None)
+                    latest[key] = r
+        rows.extend(latest.values())
     return rows
 
 
